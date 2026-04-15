@@ -9,7 +9,7 @@ import {
  * 球杆系统配置
  */
 const MAX_POWER = 25;
-const FULL_CHARGE_TIME = 1200; // 毫秒，按住约 1.2 秒充满
+const FULL_CHARGE_TIME = 1200; // 桌面端按住约 1.2 秒充满
 const CUE_LENGTH = 150;
 const CUE_BASE_OFFSET = BALL_RADIUS + 14;
 const CUE_PULLBACK_MAX = 28;
@@ -90,7 +90,7 @@ function updatePowerBar(powerFillEl, power) {
 
 /**
  * 计算从母球出发，沿指定方向到达库边的距离
- * 这里使用绿色台面边缘作为瞄准线终点边界
+ * 使用绿色台面边缘作为瞄准线终点边界
  *
  * @param {Object} cueBall
  * @param {number} dirX
@@ -125,9 +125,6 @@ function getWallDistance(cueBall, dirX, dirY) {
  * - 碰到第一颗球时停止
  * - 否则延伸到库边
  *
- * 这里使用“射线与圆”的相交测试。
- * 对于母球运动路径，碰撞判定半径使用两球半径和。
- *
  * @param {Object} cueBall
  * @param {Array<Object>} balls
  * @param {number} angle
@@ -148,16 +145,12 @@ function getAimEndPoint(cueBall, balls, angle) {
     const relX = ball.x - cueBall.x;
     const relY = ball.y - cueBall.y;
 
-    // 球心投影到射线方向
     const projection = relX * dirX + relY * dirY;
     if (projection <= 0) {
       return;
     }
 
-    // 球心到射线的垂直距离平方
     const distSq = relX * relX + relY * relY - projection * projection;
-
-    // 母球中心轨迹与目标球发生接触时的有效半径
     const collisionRadius = cueBall.radius + ball.radius;
     const collisionRadiusSq = collisionRadius * collisionRadius;
 
@@ -183,6 +176,18 @@ function getAimEndPoint(cueBall, balls, angle) {
  * 初始化球杆交互
  * 返回 drawCue，供 game.js 每帧调用
  *
+ * 桌面端：
+ * - mousemove 控制方向
+ * - mousedown 开始蓄力
+ * - mouseup 击球
+ *
+ * 移动端：
+ * - touchstart 记录起始点
+ * - touchmove：
+ *   1) 瞄准方向 = 从触摸起始点指向母球
+ *   2) 力度 = 当前手指位置相对起始点的拖拽距离
+ * - touchend 按当前角度和力度击球
+ *
  * @param {HTMLCanvasElement} canvas
  * @param {CanvasRenderingContext2D} ctx
  * @param {Array<Object>} balls
@@ -190,22 +195,52 @@ function getAimEndPoint(cueBall, balls, angle) {
  */
 export function initCue(canvas, ctx, balls) {
   let aimAngle = 0;
-  let isCharging = false;
-  let chargeStartTime = 0;
-  let currentPower = 0;
+
+  // 桌面端状态
+  let isMouseCharging = false;
+  let mouseChargeStartTime = 0;
+  let mousePower = 0;
+
+  // 移动端状态
+  let isTouchAiming = false;
+  let touchPower = 0;
+  let touchStartPoint = null;
+  let touchCurrentPoint = null;
 
   const powerFillEl = document.querySelector(".power-fill");
 
-  // 避免触摸时浏览器默认滚动 / 手势干扰
   canvas.style.touchAction = "none";
-
   updatePowerBar(powerFillEl, 0);
 
   /**
-   * 从事件更新瞄准角度
-   * @param {MouseEvent | TouchEvent} event
+   * 当前是否正在任意形式蓄力
+   * @returns {boolean}
    */
-  function updateAimAngle(event) {
+  function isCharging() {
+    return isMouseCharging || isTouchAiming;
+  }
+
+  /**
+   * 当前可用于绘制球杆后拉的力度值
+   * @returns {number}
+   */
+  function getCurrentPower() {
+    if (isTouchAiming) {
+      return touchPower;
+    }
+
+    if (isMouseCharging) {
+      return mousePower;
+    }
+
+    return 0;
+  }
+
+  /**
+   * 更新桌面端瞄准角度
+   * @param {MouseEvent} event
+   */
+  function updateMouseAimAngle(event) {
     const cueBall = getCueBall(balls);
     if (!cueBall || cueBall.isPocketed) {
       return;
@@ -227,10 +262,32 @@ export function initCue(canvas, ctx, balls) {
   }
 
   /**
-   * 开始蓄力
-   * @param {MouseEvent | TouchEvent} event
+   * 根据移动端起始触摸点更新瞄准角度
+   * 瞄准方向 = 从触摸起始点指向母球
+   *
+   * @param {{ x: number, y: number }} startPoint
    */
-  function startCharge(event) {
+  function updateTouchAimAngle(startPoint) {
+    const cueBall = getCueBall(balls);
+    if (!cueBall || cueBall.isPocketed || !startPoint) {
+      return;
+    }
+
+    const dx = cueBall.x - startPoint.x;
+    const dy = cueBall.y - startPoint.y;
+
+    if (dx === 0 && dy === 0) {
+      return;
+    }
+
+    aimAngle = Math.atan2(dy, dx);
+  }
+
+  /**
+   * 桌面端开始蓄力
+   * @param {MouseEvent} event
+   */
+  function startMouseCharge(event) {
     const cueBall = getCueBall(balls);
 
     if (!cueBall || cueBall.isPocketed) {
@@ -241,82 +298,204 @@ export function initCue(canvas, ctx, balls) {
       return;
     }
 
-    updateAimAngle(event);
+    updateMouseAimAngle(event);
 
-    isCharging = true;
-    chargeStartTime = performance.now();
-    currentPower = 0;
+    isMouseCharging = true;
+    mouseChargeStartTime = performance.now();
+    mousePower = 0;
     updatePowerBar(powerFillEl, 0);
   }
 
   /**
-   * 结束蓄力并击球
-   * @param {MouseEvent | TouchEvent} event
+   * 桌面端释放击球
+   * @param {MouseEvent} event
    */
-  function releaseShot(event) {
-    if (!isCharging) {
+  function releaseMouseShot(event) {
+    if (!isMouseCharging) {
       return;
     }
 
     const cueBall = getCueBall(balls);
     if (!cueBall || cueBall.isPocketed) {
-      isCharging = false;
-      currentPower = 0;
+      isMouseCharging = false;
+      mousePower = 0;
       updatePowerBar(powerFillEl, 0);
       return;
     }
 
-    updateAimAngle(event);
+    updateMouseAimAngle(event);
 
-    const power = currentPower;
+    const power = mousePower;
     const dirX = Math.cos(aimAngle);
     const dirY = Math.sin(aimAngle);
 
     cueBall.vx = dirX * power;
     cueBall.vy = dirY * power;
 
-    isCharging = false;
-    currentPower = 0;
+    isMouseCharging = false;
+    mousePower = 0;
     updatePowerBar(powerFillEl, 0);
   }
 
   /**
-   * 鼠标移动
-   * @param {MouseEvent} event
-   */
-  function handleMouseMove(event) {
-    updateAimAngle(event);
-  }
-
-  /**
-   * 触摸移动
+   * 移动端开始交互
    * @param {TouchEvent} event
    */
-  function handleTouchMove(event) {
-    event.preventDefault();
-    updateAimAngle(event);
+  function startTouchAim(event) {
+    const cueBall = getCueBall(balls);
+
+    if (!cueBall || cueBall.isPocketed) {
+      return;
+    }
+
+    if (!areAllBallsStopped(balls)) {
+      return;
+    }
+
+    const point = getCanvasPoint(event, canvas);
+    if (!point) {
+      return;
+    }
+
+    touchStartPoint = point;
+    touchCurrentPoint = point;
+    touchPower = 0;
+    isTouchAiming = true;
+
+    updateTouchAimAngle(touchStartPoint);
+    updatePowerBar(powerFillEl, touchPower);
   }
 
-  canvas.addEventListener("mousemove", handleMouseMove);
-  canvas.addEventListener("touchmove", handleTouchMove, { passive: false });
+  /**
+   * 移动端滑动时：
+   * - 方向由触摸起始点决定
+   * - 力度由拖拽距离决定
+   *
+   * @param {TouchEvent} event
+   */
+  function moveTouchAim(event) {
+    if (!isTouchAiming) {
+      return;
+    }
 
-  canvas.addEventListener("mousedown", startCharge);
-  canvas.addEventListener("touchstart", (event) => {
-    event.preventDefault();
-    startCharge(event);
-  }, { passive: false });
+    const cueBall = getCueBall(balls);
+    if (!cueBall || cueBall.isPocketed) {
+      return;
+    }
 
-  window.addEventListener("mouseup", releaseShot);
-  window.addEventListener("touchend", (event) => {
-    event.preventDefault();
-    releaseShot(event);
-  }, { passive: false });
+    const point = getCanvasPoint(event, canvas);
+    if (!point || !touchStartPoint) {
+      return;
+    }
 
-  window.addEventListener("touchcancel", () => {
-    isCharging = false;
-    currentPower = 0;
+    touchCurrentPoint = point;
+
+    // 方向固定为：起始触摸点 -> 母球
+    updateTouchAimAngle(touchStartPoint);
+
+    // 力度 = 当前触点相对起始点的拖拽距离
+    const dragDx = point.x - touchStartPoint.x;
+    const dragDy = point.y - touchStartPoint.y;
+    const dragDistance = Math.hypot(dragDx, dragDy);
+
+    // 以约 160px 拖拽距离映射到满力
+    touchPower = Math.min(MAX_POWER, (dragDistance / 160) * MAX_POWER);
+    updatePowerBar(powerFillEl, touchPower);
+  }
+
+  /**
+   * 移动端结束击球
+   * @param {TouchEvent} event
+   */
+  function releaseTouchShot(event) {
+    if (!isTouchAiming) {
+      return;
+    }
+
+    const cueBall = getCueBall(balls);
+    if (!cueBall || cueBall.isPocketed) {
+      isTouchAiming = false;
+      touchPower = 0;
+      touchStartPoint = null;
+      touchCurrentPoint = null;
+      updatePowerBar(powerFillEl, 0);
+      return;
+    }
+
+    const point = getCanvasPoint(event, canvas);
+    if (point) {
+      touchCurrentPoint = point;
+    }
+
+    if (touchStartPoint) {
+      updateTouchAimAngle(touchStartPoint);
+    }
+
+    const dirX = Math.cos(aimAngle);
+    const dirY = Math.sin(aimAngle);
+
+    cueBall.vx = dirX * touchPower;
+    cueBall.vy = dirY * touchPower;
+
+    isTouchAiming = false;
+    touchPower = 0;
+    touchStartPoint = null;
+    touchCurrentPoint = null;
     updatePowerBar(powerFillEl, 0);
-  }, { passive: false });
+  }
+
+  /**
+   * 取消移动端交互
+   */
+  function cancelTouchAim() {
+    isTouchAiming = false;
+    touchPower = 0;
+    touchStartPoint = null;
+    touchCurrentPoint = null;
+    updatePowerBar(powerFillEl, 0);
+  }
+
+  // 桌面端事件
+  canvas.addEventListener("mousemove", updateMouseAimAngle);
+  canvas.addEventListener("mousedown", startMouseCharge);
+  window.addEventListener("mouseup", releaseMouseShot);
+
+  // 移动端事件
+  canvas.addEventListener(
+    "touchstart",
+    (event) => {
+      event.preventDefault();
+      startTouchAim(event);
+    },
+    { passive: false }
+  );
+
+  canvas.addEventListener(
+    "touchmove",
+    (event) => {
+      event.preventDefault();
+      moveTouchAim(event);
+    },
+    { passive: false }
+  );
+
+  window.addEventListener(
+    "touchend",
+    (event) => {
+      event.preventDefault();
+      releaseTouchShot(event);
+    },
+    { passive: false }
+  );
+
+  window.addEventListener(
+    "touchcancel",
+    (event) => {
+      event.preventDefault();
+      cancelTouchAim();
+    },
+    { passive: false }
+  );
 
   /**
    * 每帧绘制瞄准线与球杆
@@ -329,17 +508,18 @@ export function initCue(canvas, ctx, balls) {
       return;
     }
 
-    // 只有所有球静止时才显示球杆和瞄准线
+    // 球在运动时不显示球杆与瞄准线
     if (!areAllBallsStopped(balls)) {
       updatePowerBar(powerFillEl, 0);
       return;
     }
 
-    if (isCharging) {
-      const elapsed = performance.now() - chargeStartTime;
+    // 桌面端按住时，按时间累加力度
+    if (isMouseCharging) {
+      const elapsed = performance.now() - mouseChargeStartTime;
       const ratio = Math.min(1, elapsed / FULL_CHARGE_TIME);
-      currentPower = MAX_POWER * ratio;
-      updatePowerBar(powerFillEl, currentPower);
+      mousePower = MAX_POWER * ratio;
+      updatePowerBar(powerFillEl, mousePower);
     }
 
     const dirX = Math.cos(aimAngle);
@@ -361,8 +541,9 @@ export function initCue(canvas, ctx, balls) {
     ctx.restore();
 
     // -------- 球杆 --------
+    const currentPower = getCurrentPower();
     const chargeRatio = currentPower / MAX_POWER;
-    const pullBack = isCharging ? chargeRatio * CUE_PULLBACK_MAX : 0;
+    const pullBack = isCharging() ? chargeRatio * CUE_PULLBACK_MAX : 0;
 
     const cueNearDistance = CUE_BASE_OFFSET + pullBack;
     const cueFarDistance = cueNearDistance + CUE_LENGTH;
