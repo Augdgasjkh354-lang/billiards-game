@@ -1,7 +1,7 @@
 /**
  * 规则层
  * 支持：
- * - 8ball：黑八规则（当前先按中式/简化国际共用逻辑）
+ * - 8ball：中式黑八（本阶段按简化规则）
  * - practice：单人练习
  */
 
@@ -27,7 +27,7 @@ export function initRules(mode = "8ball") {
   state.lastMessage =
     mode === "practice"
       ? "练习模式：自由击球。"
-      : "黑八模式：玩家 1 开球。";
+      : "中式黑八：玩家 1 开球。";
 }
 
 /**
@@ -46,7 +46,7 @@ export function getGameState() {
 }
 
 /**
- * 判断球 id 所属组别
+ * 判断球属于哪一组
  * @param {number} id
  * @returns {'solid' | 'stripe' | 'eight' | 'cue' | null}
  */
@@ -87,7 +87,7 @@ function getOpponentGroup() {
 }
 
 /**
- * 获取当前玩家编号对应的对手
+ * 获取对手玩家编号
  * @returns {1 | 2}
  */
 function getOpponentPlayer() {
@@ -95,7 +95,7 @@ function getOpponentPlayer() {
 }
 
 /**
- * 统计某组在本帧进袋数量
+ * 统计某组本杆进袋数量
  * @param {number[]} pocketedIds
  * @param {'solid' | 'stripe'} group
  * @returns {number}
@@ -105,24 +105,7 @@ function countPocketedByGroup(pocketedIds, group) {
 }
 
 /**
- * 判断某玩家所属组是否已经全部清台
- *
- * 这里根据“已进袋球”无法直接得知全局球桌状态，
- * 因此本阶段使用“规则上约定的剩余球由 game.js 传入更合理”，
- * 但按你当前接口限制，只能在 rules.js 内做简化。
- *
- * 所以这里改为由 processTurn 的 message/流程只依据当前杆是否合法和是否打进 8 号球；
- * 是否“己方已清台”通过参数扩展接口不方便，因此暂时使用 game.js 传入的全局变量会更好。
- *
- * 为了保持你要求的固定接口，这里采用模块级缓存，由 game.js 每杆结束前调用
- * setRemainingCounts(...) 会更合理；但你没有要求导出这个接口。
- *
- * 所以本实现改用 rules.js 内部开放的软依赖：
- * processTurn 第四个可选参数 turnContext，不影响原有 3 参调用。
- */
-
-/**
- * 内部辅助：从可选上下文中拿剩余球数
+ * 获取剩余球数量
  * @param {object | undefined} turnContext
  * @returns {{ solid: number, stripe: number }}
  */
@@ -138,7 +121,7 @@ function getRemainingCounts(turnContext) {
 }
 
 /**
- * 是否当前玩家已清台
+ * 当前玩家是否已清台
  * @param {object | undefined} turnContext
  * @returns {boolean}
  */
@@ -154,9 +137,7 @@ function hasClearedOwnGroup(turnContext) {
 }
 
 /**
- * 分配组别
- * 开球后首颗进袋的非 8 号目标球决定当前玩家分组
- *
+ * 通过首颗有效进袋球分组
  * @param {number[]} pocketedIds
  * @returns {'solid' | 'stripe' | null}
  */
@@ -164,18 +145,20 @@ function assignGroupsFromPocketed(pocketedIds) {
   for (const id of pocketedIds) {
     const group = getBallGroup(id);
 
-    if (group === "solid" || group === "stripe") {
-      if (state.currentPlayer === 1) {
-        state.player1Group = group;
-        state.player2Group = group === "solid" ? "stripe" : "solid";
-      } else {
-        state.player2Group = group;
-        state.player1Group = group === "solid" ? "stripe" : "solid";
-      }
-
-      state.groupAssigned = true;
-      return group;
+    if (group !== "solid" && group !== "stripe") {
+      continue;
     }
+
+    if (state.currentPlayer === 1) {
+      state.player1Group = group;
+      state.player2Group = group === "solid" ? "stripe" : "solid";
+    } else {
+      state.player2Group = group;
+      state.player1Group = group === "solid" ? "stripe" : "solid";
+    }
+
+    state.groupAssigned = true;
+    return group;
   }
 
   return null;
@@ -189,10 +172,10 @@ function switchPlayer() {
 }
 
 /**
- * 推杆规则预留接口（本阶段不实现）
+ * 国际黑八 push out 规则预留接口
  */
 function handlePushOut() {
-  // TODO: 国际黑八 push out 规则留空接口
+  // TODO: 国际黑八 push out 规则留空
 }
 
 /**
@@ -201,7 +184,7 @@ function handlePushOut() {
  * @param {number[]} pocketedIds 本杆进袋球 id
  * @param {boolean} cueBallPocketed 本杆母球是否进袋
  * @param {number | null} firstHitBallId 第一颗被母球击中的球 id
- * @param {object} [turnContext] 可选上下文（game.js 内部可传，不影响原接口使用）
+ * @param {object} [turnContext]
  * @returns {{
  *   foul: boolean,
  *   continuesTurn: boolean,
@@ -216,11 +199,15 @@ export function processTurn(
   turnContext = {}
 ) {
   if (state.gameMode === "practice") {
-    const message = cueBallPocketed
-      ? "练习模式：母球进袋，已自动复位。"
-      : pocketedIds.length > 0
-        ? `练习模式：进袋球 ${pocketedIds.join(", ")}。`
-        : "练习模式：本杆结束。";
+    const targetPocketedCount = pocketedIds.filter((id) => id !== 0).length;
+
+    let message = "练习模式：本杆结束。";
+
+    if (cueBallPocketed) {
+      message = "练习模式：母球进袋，已自动复位。";
+    } else if (targetPocketedCount > 0) {
+      message = `练习模式：本杆进袋 ${targetPocketedCount} 颗。`;
+    }
 
     state.lastMessage = message;
 
@@ -242,7 +229,6 @@ export function processTurn(
   const currentPlayer = state.currentPlayer;
   const opponentPlayer = getOpponentPlayer();
   const currentGroup = getCurrentPlayerGroup();
-  const opponentGroup = getOpponentGroup();
 
   // 1. 未击中任何球
   if (firstHitBallId == null) {
@@ -250,7 +236,7 @@ export function processTurn(
     messages.push("犯规：未击中任何球。");
   }
 
-  // 2. 分组后，第一颗击中的球不属于当前玩家组
+  // 2. 分组后第一颗击中的球不属于当前玩家
   if (state.groupAssigned && firstHitBallId != null) {
     const firstHitGroup = getBallGroup(firstHitBallId);
 
@@ -263,7 +249,6 @@ export function processTurn(
       messages.push("犯规：第一颗击中的球不属于当前玩家组。");
     }
 
-    // 若击中 8 号球但自己还没清台，也视为违规方向
     if (
       currentGroup &&
       firstHitGroup === "eight" &&
@@ -280,21 +265,21 @@ export function processTurn(
     messages.push("犯规：母球进袋。");
   }
 
-  // 4. 分组逻辑：未分组时，首颗进袋的非 8 号球决定组别
-  let assignedGroup = null;
+  // 4. 未分组时，首颗非 8 号进袋球决定分组
   if (!state.groupAssigned) {
-    assignedGroup = assignGroupsFromPocketed(pocketedIds);
+    const assignedGroup = assignGroupsFromPocketed(pocketedIds);
+
     if (assignedGroup) {
+      const selfText = assignedGroup === "solid" ? "全色" : "花色";
+      const oppText = assignedGroup === "solid" ? "花色" : "全色";
       messages.push(
-        `分组确定：玩家 ${currentPlayer} 为${assignedGroup === "solid" ? "全色" : "花色"}，玩家 ${opponentPlayer} 为${assignedGroup === "solid" ? "花色" : "全色"}。`
+        `分组确定：玩家 ${currentPlayer} 为${selfText}，玩家 ${opponentPlayer} 为${oppText}。`
       );
     }
   }
 
   // 5. 8 号球判定
-  const pocketedEight = pocketedIds.includes(8);
-
-  if (pocketedEight) {
+  if (pocketedIds.includes(8)) {
     const clearedOwnGroup = hasClearedOwnGroup(turnContext);
 
     if (clearedOwnGroup && !cueBallPocketed && !foul) {
@@ -307,7 +292,7 @@ export function processTurn(
     }
   }
 
-  // 已经分出胜负则不再处理换人/续杆
+  // 已有胜负
   if (winner != null) {
     const message = messages.join(" ");
     state.lastMessage = message;
@@ -323,15 +308,11 @@ export function processTurn(
   // 6. 是否继续回合
   if (!foul) {
     if (!state.groupAssigned) {
-      // 未分组阶段：只要打进了非 8 号球即可继续
-      const scoredNonEight = pocketedIds.some((id) => {
+      continuesTurn = pocketedIds.some((id) => {
         const group = getBallGroup(id);
         return group === "solid" || group === "stripe";
       });
-
-      continuesTurn = scoredNonEight;
     } else {
-      // 已分组阶段：打进己方球可继续
       continuesTurn =
         currentGroup != null &&
         countPocketedByGroup(pocketedIds, currentGroup) > 0;
@@ -343,14 +324,14 @@ export function processTurn(
     switchPlayer();
   }
 
-  // 8. 输出提示
+  // 8. 生成提示
   if (messages.length === 0) {
     if (continuesTurn) {
       messages.push(`玩家 ${currentPlayer} 继续击球。`);
     } else {
       messages.push(`轮到玩家 ${state.currentPlayer}。`);
     }
-  } else if (!winner) {
+  } else {
     if (foul) {
       messages.push(`轮到玩家 ${state.currentPlayer}。`);
     } else if (continuesTurn) {
