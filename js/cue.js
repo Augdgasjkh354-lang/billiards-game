@@ -2,7 +2,9 @@ import {
   TABLE_WIDTH,
   TABLE_HEIGHT,
   TABLE_PADDING,
-  BALL_RADIUS
+  BALL_RADIUS,
+  POCKETS,
+  POCKET_RADIUS
 } from "./constants.js";
 
 /**
@@ -223,48 +225,175 @@ function tryMoveCueBallToPoint(point, balls) {
 }
 
 /**
- * 计算从母球出发，沿指定方向到达库边的距离
- * @param {Object} cueBall
+ * 计算一条射线到库边的距离
+ * inset=0 表示台面边缘
+ * inset=BALL_RADIUS 表示球心运动可达边界
+ *
+ * @param {number} originX
+ * @param {number} originY
  * @param {number} dirX
  * @param {number} dirY
+ * @param {number} inset
  * @returns {number}
  */
-function getWallDistance(cueBall, dirX, dirY) {
-  const minX = TABLE_PADDING;
-  const maxX = TABLE_WIDTH - TABLE_PADDING;
-  const minY = TABLE_PADDING;
-  const maxY = TABLE_HEIGHT - TABLE_PADDING;
+function getWallDistanceForRay(originX, originY, dirX, dirY, inset = 0) {
+  const minX = TABLE_PADDING + inset;
+  const maxX = TABLE_WIDTH - TABLE_PADDING - inset;
+  const minY = TABLE_PADDING + inset;
+  const maxY = TABLE_HEIGHT - TABLE_PADDING - inset;
 
   let tMin = Infinity;
 
   if (dirX > 0) {
-    tMin = Math.min(tMin, (maxX - cueBall.x) / dirX);
+    tMin = Math.min(tMin, (maxX - originX) / dirX);
   } else if (dirX < 0) {
-    tMin = Math.min(tMin, (minX - cueBall.x) / dirX);
+    tMin = Math.min(tMin, (minX - originX) / dirX);
   }
 
   if (dirY > 0) {
-    tMin = Math.min(tMin, (maxY - cueBall.y) / dirY);
+    tMin = Math.min(tMin, (maxY - originY) / dirY);
   } else if (dirY < 0) {
-    tMin = Math.min(tMin, (minY - cueBall.y) / dirY);
+    tMin = Math.min(tMin, (minY - originY) / dirY);
   }
 
   return tMin;
 }
 
 /**
- * 计算瞄准线终点
+ * 射线与圆的最近正向交点距离
+ * 若无交点，返回 Infinity
+ *
+ * @param {number} originX
+ * @param {number} originY
+ * @param {number} dirX
+ * @param {number} dirY
+ * @param {number} centerX
+ * @param {number} centerY
+ * @param {number} radius
+ * @returns {number}
+ */
+function getRayCircleIntersectionDistance(
+  originX,
+  originY,
+  dirX,
+  dirY,
+  centerX,
+  centerY,
+  radius
+) {
+  const ocX = originX - centerX;
+  const ocY = originY - centerY;
+
+  const b = 2 * (ocX * dirX + ocY * dirY);
+  const c = ocX * ocX + ocY * ocY - radius * radius;
+  const discriminant = b * b - 4 * c;
+
+  if (discriminant < 0) {
+    return Infinity;
+  }
+
+  const sqrtDiscriminant = Math.sqrt(discriminant);
+  const t1 = (-b - sqrtDiscriminant) / 2;
+  const t2 = (-b + sqrtDiscriminant) / 2;
+
+  if (t1 > 0) {
+    return t1;
+  }
+
+  if (t2 > 0) {
+    return t2;
+  }
+
+  return Infinity;
+}
+
+/**
+ * 计算某条预测线的终点
+ * - 默认到库边
+ * - allowPockets=true 时，若先遇到袋口则停在袋口
+ *
+ * @param {number} originX
+ * @param {number} originY
+ * @param {number} dirX
+ * @param {number} dirY
+ * @param {{ inset?: number, allowPockets?: boolean }} options
+ * @returns {{ x: number, y: number, distance: number }}
+ */
+function getTrajectoryStopPoint(
+  originX,
+  originY,
+  dirX,
+  dirY,
+  options = {}
+) {
+  const inset = options.inset ?? BALL_RADIUS;
+  const allowPockets = options.allowPockets ?? false;
+
+  let nearestDistance = getWallDistanceForRay(
+    originX,
+    originY,
+    dirX,
+    dirY,
+    inset
+  );
+
+  if (allowPockets) {
+    POCKETS.forEach((pocket) => {
+      const pocketDistance = getRayCircleIntersectionDistance(
+        originX,
+        originY,
+        dirX,
+        dirY,
+        pocket.x,
+        pocket.y,
+        POCKET_RADIUS
+      );
+
+      if (pocketDistance > 0 && pocketDistance < nearestDistance) {
+        nearestDistance = pocketDistance;
+      }
+    });
+  }
+
+  return {
+    x: originX + dirX * nearestDistance,
+    y: originY + dirY * nearestDistance,
+    distance: nearestDistance
+  };
+}
+
+/**
+ * 计算母球瞄准的首碰信息
+ * - 保留现有瞄准线逻辑：到第一颗球或到库边
+ * - 若碰到球，返回 ghost ball 位置和目标球
+ *
  * @param {Object} cueBall
  * @param {Array<Object>} balls
  * @param {number} angle
- * @returns {{ x: number, y: number }}
+ * @returns {{
+ *   endX: number,
+ *   endY: number,
+ *   dirX: number,
+ *   dirY: number,
+ *   hitBall: Object | null,
+ *   ghostX: number | null,
+ *   ghostY: number | null
+ * }}
  */
-function getAimEndPoint(cueBall, balls, angle) {
+function getAimCollisionInfo(cueBall, balls, angle) {
   const dirX = Math.cos(angle);
   const dirY = Math.sin(angle);
 
-  const wallDistance = getWallDistance(cueBall, dirX, dirY);
+  const wallDistance = getWallDistanceForRay(
+    cueBall.x,
+    cueBall.y,
+    dirX,
+    dirY,
+    0
+  );
+
   let nearestDistance = wallDistance;
+  let hitBall = null;
 
   balls.forEach((ball) => {
     if (ball.id === 0 || ball.isPocketed) {
@@ -292,12 +421,21 @@ function getAimEndPoint(cueBall, balls, angle) {
 
     if (hitDistance > 0 && hitDistance < nearestDistance) {
       nearestDistance = hitDistance;
+      hitBall = ball;
     }
   });
 
+  const endX = cueBall.x + dirX * nearestDistance;
+  const endY = cueBall.y + dirY * nearestDistance;
+
   return {
-    x: cueBall.x + dirX * nearestDistance,
-    y: cueBall.y + dirY * nearestDistance
+    endX,
+    endY,
+    dirX,
+    dirY,
+    hitBall,
+    ghostX: hitBall ? endX : null,
+    ghostY: hitBall ? endY : null
   };
 }
 
@@ -400,7 +538,8 @@ export function initCue(canvas, ctx, balls) {
   leftBarFillEl.style.right = "0";
   leftBarFillEl.style.bottom = "0";
   leftBarFillEl.style.height = "0%";
-  leftBarFillEl.style.background = "linear-gradient(180deg, rgba(255,255,255,0.3), rgba(255,255,255,0.75))";
+  leftBarFillEl.style.background =
+    "linear-gradient(180deg, rgba(255,255,255,0.3), rgba(255,255,255,0.75))";
 
   leftBarLabelEl.textContent = "力度";
   leftBarLabelEl.style.position = "absolute";
@@ -531,7 +670,7 @@ export function initCue(canvas, ctx, balls) {
   }
 
   /**
-   * 当前绘制用力度
+   * 当前桌面端绘制用力度
    * @returns {number}
    */
   function getCurrentPower() {
@@ -543,9 +682,20 @@ export function initCue(canvas, ctx, balls) {
   }
 
   /**
+   * 当前预测用力度
+   * 桌面端按住时使用实时力度；否则用移动端锁定力度
+   * @returns {number}
+   */
+  function getPreviewPower() {
+    if (isMouseCharging) {
+      return mousePower;
+    }
+
+    return mobileLockedPower;
+  }
+
+  /**
    * 同步底部力度条
-   * - 桌面端按住时显示 mousePower
-   * - 否则显示移动端锁定力度
    */
   function syncBottomPowerBar() {
     if (isMouseCharging) {
@@ -757,22 +907,6 @@ export function initCue(canvas, ctx, balls) {
   }
 
   /**
-   * 通过 touch 对象构造 canvas 相对坐标
-   * @param {Touch} touch
-   * @returns {{ x: number, y: number }}
-   */
-  function touchToCanvasPoint(touch) {
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-
-    return {
-      x: (touch.clientX - rect.left) * scaleX,
-      y: (touch.clientY - rect.top) * scaleY
-    };
-  }
-
-  /**
    * 根据左侧力度条中的触点位置设置锁定力度
    * 顶部 = MAX_POWER，底部 = 0
    * @param {Touch} touch
@@ -857,7 +991,6 @@ export function initCue(canvas, ctx, balls) {
       return;
     }
 
-    // 自由球手摆时，只允许操作 canvas
     if (ballInHandActive) {
       if (zone !== "canvas") {
         return;
@@ -885,23 +1018,11 @@ export function initCue(canvas, ctx, balls) {
 
     if (zone === "left") {
       updateLockedPowerFromTouch(touch);
-      return;
     }
-
-    if (zone === "right") {
-      return;
-    }
-
-    // zone === "canvas"
-    // 球桌区域：单指滑动旋转，不自动出杆
   }
 
   function handleTouchMove(event) {
-    if (!interactionEnabled) {
-      return;
-    }
-
-    if (activeTouchId == null) {
+    if (!interactionEnabled || activeTouchId == null) {
       return;
     }
 
@@ -1052,13 +1173,24 @@ export function initCue(canvas, ctx, balls) {
 
     syncBottomPowerBar();
 
-    const dirX = Math.cos(aimAngle);
-    const dirY = Math.sin(aimAngle);
+    const currentPower = getCurrentPower();
+    const previewPower = getPreviewPower();
 
-    // -------- 瞄准线始终显示 --------
+    // 计算首碰信息
+    const collisionInfo = getAimCollisionInfo(cueBall, balls, aimAngle);
+    const {
+      dirX,
+      dirY,
+      endX,
+      endY,
+      hitBall,
+      ghostX,
+      ghostY
+    } = collisionInfo;
+
+    // -------- 第一条线：母球运动轨迹线（保留原逻辑）--------
     const aimStartX = cueBall.x + dirX * (cueBall.radius + 2);
     const aimStartY = cueBall.y + dirY * (cueBall.radius + 2);
-    const aimEnd = getAimEndPoint(cueBall, balls, aimAngle);
 
     ctx.save();
     ctx.beginPath();
@@ -1066,14 +1198,101 @@ export function initCue(canvas, ctx, balls) {
     ctx.lineWidth = 2;
     ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
     ctx.moveTo(aimStartX, aimStartY);
-    ctx.lineTo(aimEnd.x, aimEnd.y);
+    ctx.lineTo(endX, endY);
     ctx.stroke();
     ctx.restore();
+
+    // -------- 新增：碰撞预测辅助线 --------
+    if (hitBall && ghostX != null && ghostY != null) {
+      const normalDX = hitBall.x - ghostX;
+      const normalDY = hitBall.y - ghostY;
+      const normalLength = Math.hypot(normalDX, normalDY);
+
+      if (normalLength > 0.0001) {
+        const nx = normalDX / normalLength;
+        const ny = normalDY / normalLength;
+
+        // 1) 幽灵球
+        ctx.save();
+        ctx.beginPath();
+        ctx.fillStyle = "rgba(255, 255, 255, 0.22)";
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.5)";
+        ctx.lineWidth = 1.5;
+        ctx.arc(ghostX, ghostY, cueBall.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+
+        // 2) 目标球运动预测线
+        // 先画幽灵球圆心 -> 目标球圆心
+        ctx.save();
+        ctx.beginPath();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "rgba(255, 220, 50, 0.6)";
+        ctx.moveTo(ghostX, ghostY);
+        ctx.lineTo(hitBall.x, hitBall.y);
+        ctx.stroke();
+
+        const targetStop = getTrajectoryStopPoint(
+          hitBall.x,
+          hitBall.y,
+          nx,
+          ny,
+          {
+            inset: BALL_RADIUS,
+            allowPockets: true
+          }
+        );
+
+        ctx.beginPath();
+        ctx.setLineDash([8, 6]);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "rgba(255, 220, 50, 0.6)";
+        ctx.moveTo(hitBall.x, hitBall.y);
+        ctx.lineTo(targetStop.x, targetStop.y);
+        ctx.stroke();
+        ctx.restore();
+
+        // 3) 母球碰撞后反弹预测线
+        // 等质量弹性碰撞下，母球只保留切向分量
+        // 切向方向为法线的垂线方向
+        if (previewPower > 0) {
+          const tangentAX = -ny;
+          const tangentAY = nx;
+          const tangentDot = dirX * tangentAX + dirY * tangentAY;
+
+          if (Math.abs(tangentDot) > 0.0001) {
+            const tx = tangentDot >= 0 ? tangentAX : -tangentAX;
+            const ty = tangentDot >= 0 ? tangentAY : -tangentAY;
+
+            const cueStop = getTrajectoryStopPoint(
+              ghostX,
+              ghostY,
+              tx,
+              ty,
+              {
+                inset: BALL_RADIUS,
+                allowPockets: false
+              }
+            );
+
+            ctx.save();
+            ctx.beginPath();
+            ctx.setLineDash([8, 6]);
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = "rgba(100, 180, 255, 0.6)";
+            ctx.moveTo(ghostX, ghostY);
+            ctx.lineTo(cueStop.x, cueStop.y);
+            ctx.stroke();
+            ctx.restore();
+          }
+        }
+      }
+    }
 
     // -------- 球杆 --------
     // 桌面端保持原逻辑：按住才后拉
     // 移动端不后拉，力度由左条锁定，tap 出杆
-    const currentPower = getCurrentPower();
     const chargeRatio = currentPower / MAX_POWER;
     const pullBack = isCharging() ? chargeRatio * CUE_PULLBACK_MAX : 0;
 
