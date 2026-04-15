@@ -419,14 +419,47 @@ function drawCloth() {
 
 /**
  * 绘制袋口
+ * - 角袋：标准半径
+ * - 中袋：略小
+ * - 使用黑色到深棕色的径向渐变模拟深度
  */
 function drawPockets() {
-  ctx.fillStyle = "#000000";
-
   POCKETS.forEach((pocket) => {
+    const radius = pocket.radius;
+    const isSidePocket = radius < POCKETS[0].radius;
+
+    // 黑色底圆
+    ctx.save();
     ctx.beginPath();
-    ctx.arc(pocket.x, pocket.y, pocket.radius, 0, Math.PI * 2);
+    ctx.arc(pocket.x, pocket.y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = "#000000";
     ctx.fill();
+
+    // 径向渐变，模拟袋口深度
+    const gradient = ctx.createRadialGradient(
+      pocket.x,
+      pocket.y,
+      radius * 0.12,
+      pocket.x,
+      pocket.y,
+      radius
+    );
+    gradient.addColorStop(0, "#050505");
+    gradient.addColorStop(1, "#3a1f0d");
+
+    ctx.beginPath();
+    ctx.arc(pocket.x, pocket.y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = gradient;
+    ctx.fill();
+
+    // 外圈描边
+    ctx.beginPath();
+    ctx.arc(pocket.x, pocket.y, radius, 0, Math.PI * 2);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#3a1f0d";
+    ctx.stroke();
+
+    ctx.restore();
   });
 }
 
