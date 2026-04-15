@@ -4,12 +4,15 @@ import {
   TABLE_PADDING,
   POCKETS
 } from "./constants.js";
+import { initBalls, drawBalls } from "./balls.js";
 
 /**
- * 第一阶段：
+ * 第二阶段：
  * 1. 获取 canvas 和 context
  * 2. 设置 canvas 尺寸
- * 3. 绘制静态球桌（台面、库边、袋口）
+ * 3. 绘制静态球桌
+ * 4. 初始化球
+ * 5. 绘制球
  */
 
 const canvas = document.getElementById("gameCanvas");
@@ -19,11 +22,14 @@ const ctx = canvas.getContext("2d");
 canvas.width = TABLE_WIDTH;
 canvas.height = TABLE_HEIGHT;
 
+// 初始化球
+const balls = initBalls();
+
 /**
  * 绘制球桌外框（库边）
  */
 function drawRails() {
-  ctx.fillStyle = "#4a2f1b"; // 深色木质 / 库边颜色
+  ctx.fillStyle = "#4a2f1b";
   ctx.fillRect(0, 0, TABLE_WIDTH, TABLE_HEIGHT);
 }
 
@@ -31,7 +37,7 @@ function drawRails() {
  * 绘制台面
  */
 function drawCloth() {
-  ctx.fillStyle = "#1f8b4c"; // 绿色台面
+  ctx.fillStyle = "#1f8b4c";
   ctx.fillRect(
     TABLE_PADDING,
     TABLE_PADDING,
@@ -44,7 +50,7 @@ function drawCloth() {
  * 绘制袋口
  */
 function drawPockets() {
-  ctx.fillStyle = "#000";
+  ctx.fillStyle = "#000000";
 
   POCKETS.forEach((pocket) => {
     ctx.beginPath();
@@ -54,7 +60,7 @@ function drawPockets() {
 }
 
 /**
- * 可选：给台面画一层边线，让区域更清晰
+ * 绘制台面内部边线
  */
 function drawInnerBorder() {
   ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
@@ -68,16 +74,17 @@ function drawInnerBorder() {
 }
 
 /**
- * 主绘制函数
+ * 主渲染函数
  */
-function renderTable() {
+function render() {
   ctx.clearRect(0, 0, TABLE_WIDTH, TABLE_HEIGHT);
 
   drawRails();
   drawCloth();
   drawInnerBorder();
   drawPockets();
+  drawBalls(ctx, balls);
 }
 
-// 第一阶段只需静态渲染一次
-renderTable();
+// 第二阶段依然是静态画面，只渲染一次
+render();
