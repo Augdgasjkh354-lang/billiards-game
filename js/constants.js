@@ -15,14 +15,14 @@ export const BALL_RADIUS = 12;
 // 袋口半径
 export const POCKET_RADIUS = 18;
 
-// 6 个袋口坐标（四角 + 上下中间）
+// 6 个袋口坐标（位于台面边缘：绿色区域与库边交接处）
 export const POCKETS = [
-  { x: 0, y: 0, radius: POCKET_RADIUS },                              // 左上
-  { x: TABLE_WIDTH / 2, y: 0, radius: POCKET_RADIUS },               // 上中
-  { x: TABLE_WIDTH, y: 0, radius: POCKET_RADIUS },                   // 右上
-  { x: 0, y: TABLE_HEIGHT, radius: POCKET_RADIUS },                  // 左下
-  { x: TABLE_WIDTH / 2, y: TABLE_HEIGHT, radius: POCKET_RADIUS },    // 下中
-  { x: TABLE_WIDTH, y: TABLE_HEIGHT, radius: POCKET_RADIUS }         // 右下
+  { x: TABLE_PADDING, y: TABLE_PADDING, radius: POCKET_RADIUS },                             // 左上
+  { x: TABLE_WIDTH / 2, y: TABLE_PADDING, radius: POCKET_RADIUS },                          // 上中
+  { x: TABLE_WIDTH - TABLE_PADDING, y: TABLE_PADDING, radius: POCKET_RADIUS },              // 右上
+  { x: TABLE_PADDING, y: TABLE_HEIGHT - TABLE_PADDING, radius: POCKET_RADIUS },             // 左下
+  { x: TABLE_WIDTH / 2, y: TABLE_HEIGHT - TABLE_PADDING, radius: POCKET_RADIUS },           // 下中
+  { x: TABLE_WIDTH - TABLE_PADDING, y: TABLE_HEIGHT - TABLE_PADDING, radius: POCKET_RADIUS } // 右下
 ];
 
 // 球颜色数组
