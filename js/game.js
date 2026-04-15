@@ -5,25 +5,38 @@ import {
   POCKETS
 } from "./constants.js";
 import { initBalls, drawBalls } from "./balls.js";
+import {
+  updateBalls,
+  handleWallCollisions,
+  handleBallCollisions,
+  checkPockets
+} from "./physics.js";
 
 /**
- * 第二阶段：
+ * 第三阶段：
  * 1. 获取 canvas 和 context
  * 2. 设置 canvas 尺寸
- * 3. 绘制静态球桌
- * 4. 初始化球
- * 5. 绘制球
+ * 3. 初始化球
+ * 4. 启动 requestAnimationFrame 主循环
+ * 5. 每帧执行物理更新并重绘
  */
 
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
-// 从 constants.js 读取球桌尺寸并设置 canvas 大小
+// 设置 canvas 尺寸
 canvas.width = TABLE_WIDTH;
 canvas.height = TABLE_HEIGHT;
 
 // 初始化球
 const balls = initBalls();
+
+// 给母球一个测试初速度
+const cueBall = balls.find((ball) => ball.id === 0);
+if (cueBall) {
+  cueBall.vx = 8;
+  cueBall.vy = 0;
+}
 
 /**
  * 绘制球桌外框（库边）
@@ -34,7 +47,7 @@ function drawRails() {
 }
 
 /**
- * 绘制台面
+ * 绘制绿色台面
  */
 function drawCloth() {
   ctx.fillStyle = "#1f8b4c";
@@ -74,7 +87,7 @@ function drawInnerBorder() {
 }
 
 /**
- * 主渲染函数
+ * 渲染球桌和所有球
  */
 function render() {
   ctx.clearRect(0, 0, TABLE_WIDTH, TABLE_HEIGHT);
@@ -86,5 +99,30 @@ function render() {
   drawBalls(ctx, balls);
 }
 
-// 第二阶段依然是静态画面，只渲染一次
+/**
+ * 主循环
+ */
+function gameLoop() {
+  // 1. 更新位置和速度
+  updateBalls(balls);
+
+  // 2. 处理每颗球与库边碰撞
+  balls.forEach((ball) => {
+    handleWallCollisions(ball);
+  });
+
+  // 3. 处理球与球碰撞
+  handleBallCollisions(balls);
+
+  // 4. 检测进袋
+  checkPockets(balls);
+
+  // 5. 重绘
+  render();
+
+  requestAnimationFrame(gameLoop);
+}
+
+// 启动
 render();
+requestAnimationFrame(gameLoop);
