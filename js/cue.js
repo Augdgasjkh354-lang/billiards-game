@@ -24,6 +24,21 @@ const MOBILE_FINE_TUNE_SPEED = 0.002;
 // 移动端：tap 判定阈值
 const MOBILE_TAP_THRESHOLD = 10;
 
+// 加塞控件配置
+const SPIN_CONTROL_MARGIN = 16;
+const SPIN_OUTER_RADIUS = 30;
+const SPIN_INNER_RADIUS = 28;
+const SPIN_DOT_RADIUS = 5;
+
+/**
+ * 导出的全局加塞状态
+ * physics.js 后续可直接 import 读取
+ */
+export const spin = {
+  x: 0,
+  y: 0
+};
+
 /**
  * 判断当前是否所有球都静止
  * @param {Array<Object>} balls
@@ -115,6 +130,52 @@ function clamp(value, min, max) {
  */
 function isPointOnBall(point, ball) {
   return Math.hypot(point.x - ball.x, point.y - ball.y) <= ball.radius + 6;
+}
+
+/**
+ * 获取加塞控件中心
+ * @returns {{ x:number, y:number }}
+ */
+function getSpinControlCenter() {
+  return {
+    x: TABLE_WIDTH - SPIN_CONTROL_MARGIN - SPIN_OUTER_RADIUS,
+    y: SPIN_CONTROL_MARGIN + SPIN_OUTER_RADIUS
+  };
+}
+
+/**
+ * 判断点是否在加塞控件内
+ * @param {{ x:number, y:number }} point
+ * @returns {boolean}
+ */
+function isPointInSpinControl(point) {
+  const center = getSpinControlCenter();
+  return Math.hypot(point.x - center.x, point.y - center.y) <= SPIN_OUTER_RADIUS;
+}
+
+/**
+ * 根据触点更新加塞红点位置
+ * 归一化到 [-1, 1]
+ *
+ * @param {{ x:number, y:number }} point
+ */
+function updateSpinFromPoint(point) {
+  const center = getSpinControlCenter();
+  const maxDistance = SPIN_OUTER_RADIUS - SPIN_DOT_RADIUS;
+
+  let dx = point.x - center.x;
+  let dy = point.y - center.y;
+
+  const distance = Math.hypot(dx, dy);
+
+  if (distance > maxDistance && distance > 0) {
+    const scale = maxDistance / distance;
+    dx *= scale;
+    dy *= scale;
+  }
+
+  spin.x = clamp(dx / maxDistance, -1, 1);
+  spin.y = clamp(dy / maxDistance, -1, 1);
 }
 
 /**
@@ -226,8 +287,6 @@ function tryMoveCueBallToPoint(point, balls) {
 
 /**
  * 计算一条射线到库边的距离
- * inset=0 表示台面边缘
- * inset=BALL_RADIUS 表示球心运动可达边界
  *
  * @param {number} originX
  * @param {number} originY
@@ -261,7 +320,6 @@ function getWallDistanceForRay(originX, originY, dirX, dirY, inset = 0) {
 
 /**
  * 射线与圆的最近正向交点距离
- * 若无交点，返回 Infinity
  *
  * @param {number} originX
  * @param {number} originY
@@ -309,8 +367,6 @@ function getRayCircleIntersectionDistance(
 
 /**
  * 计算某条预测线的终点
- * - 默认到库边
- * - allowPockets=true 时，若先遇到袋口则停在袋口
  *
  * @param {number} originX
  * @param {number} originY
@@ -363,9 +419,7 @@ function getTrajectoryStopPoint(
 }
 
 /**
- * 计算母球瞄准的首碰信息
- * - 保留现有瞄准线逻辑：到第一颗球或到库边
- * - 若碰到球，返回 ghost ball 位置和目标球
+ * 计算母球瞄准首碰信息
  *
  * @param {Object} cueBall
  * @param {Array<Object>} balls
@@ -494,16 +548,17 @@ export function initCue(canvas, ctx, balls) {
   let mouseChargeStartTime = 0;
   let mousePower = 0;
 
-  // 移动端锁定力度：不会自动归零
+  // 移动端锁定力度
   let mobileLockedPower = DEFAULT_MOBILE_POWER;
 
   // 移动端当前手势会话
   let activeTouchId = null;
-  let activeTouchZone = null; // left | canvas | right | ballInHand
+  let activeTouchZone = null; // left | canvas | right | ballInHand | spin
   let touchStartClientX = 0;
   let touchStartClientY = 0;
   let touchStartAngle = 0;
   let draggingBallInHand = false;
+  let draggingSpinControl = false;
 
   // 自由球手摆
   let ballInHandActive = false;
@@ -651,6 +706,7 @@ export function initCue(canvas, ctx, balls) {
     touchStartClientY = 0;
     touchStartAngle = 0;
     draggingBallInHand = false;
+    draggingSpinControl = false;
   }
 
   /**
@@ -683,7 +739,6 @@ export function initCue(canvas, ctx, balls) {
 
   /**
    * 当前预测用力度
-   * 桌面端按住时使用实时力度；否则用移动端锁定力度
    * @returns {number}
    */
   function getPreviewPower() {
@@ -721,6 +776,11 @@ export function initCue(canvas, ctx, balls) {
       return;
     }
 
+    // 如果点在加塞控件内，桌面端保持原逻辑，不在此处理拖动
+    if (isPointInSpinControl(point)) {
+      return;
+    }
+
     const dx = point.x - cueBall.x;
     const dy = point.y - cueBall.y;
 
@@ -729,6 +789,22 @@ export function initCue(canvas, ctx, balls) {
     }
 
     aimAngle = Math.atan2(dy, dx);
+  }
+
+  /**
+   * 出杆前把当前加塞附加到母球
+   * 供 physics.js 后续读取
+   *
+   * @param {Object} cueBall
+   * @param {number} power
+   */
+  function attachSpinToCueBall(cueBall, power) {
+    cueBall.spin = {
+      x: spin.x,
+      y: spin.y
+    };
+
+    cueBall.spinFactor = power * 0.3;
   }
 
   /**
@@ -745,6 +821,8 @@ export function initCue(canvas, ctx, balls) {
 
     cueBall.vx = dirX * mobileLockedPower;
     cueBall.vy = dirY * mobileLockedPower;
+
+    attachSpinToCueBall(cueBall, mobileLockedPower);
   }
 
   /**
@@ -838,6 +916,11 @@ export function initCue(canvas, ctx, balls) {
       return;
     }
 
+    const point = getCanvasPoint(event, canvas);
+    if (point && isPointInSpinControl(point)) {
+      return;
+    }
+
     updateMouseAimAngle(event);
 
     isMouseCharging = true;
@@ -871,6 +954,8 @@ export function initCue(canvas, ctx, balls) {
     cueBall.vx = dirX * power;
     cueBall.vy = dirY * power;
 
+    attachSpinToCueBall(cueBall, power);
+
     clearMouseChargeState();
     syncBottomPowerBar();
   }
@@ -899,7 +984,10 @@ export function initCue(canvas, ctx, balls) {
     aimAngle = 0;
     ballInHandActive = false;
     draggingBallInHand = false;
+    draggingSpinControl = false;
     mobileLockedPower = DEFAULT_MOBILE_POWER;
+    spin.x = 0;
+    spin.y = 0;
     clearAllTemporaryState();
     updateMobilePowerBarUI();
     syncBottomPowerBar();
@@ -965,7 +1053,7 @@ export function initCue(canvas, ctx, balls) {
   });
 
   // -------------------------
-  // 移动端：三个区域独立
+  // 移动端：三个区域独立 + 加塞控件
   // -------------------------
 
   function handleTouchStart(event) {
@@ -1018,6 +1106,21 @@ export function initCue(canvas, ctx, balls) {
 
     if (zone === "left") {
       updateLockedPowerFromTouch(touch);
+      return;
+    }
+
+    if (zone === "canvas") {
+      const point = {
+        x: (touch.clientX - canvas.getBoundingClientRect().left) * (canvas.width / canvas.getBoundingClientRect().width),
+        y: (touch.clientY - canvas.getBoundingClientRect().top) * (canvas.height / canvas.getBoundingClientRect().height)
+      };
+
+      if (isPointInSpinControl(point)) {
+        activeTouchZone = "spin";
+        draggingSpinControl = true;
+        updateSpinFromPoint(point);
+        return;
+      }
     }
   }
 
@@ -1038,6 +1141,17 @@ export function initCue(canvas, ctx, balls) {
         touches: [touch],
         changedTouches: [touch]
       });
+      return;
+    }
+
+    if (activeTouchZone === "spin") {
+      const rect = canvas.getBoundingClientRect();
+      const point = {
+        x: (touch.clientX - rect.left) * (canvas.width / rect.width),
+        y: (touch.clientY - rect.top) * (canvas.height / rect.height)
+      };
+
+      updateSpinFromPoint(point);
       return;
     }
 
@@ -1072,6 +1186,11 @@ export function initCue(canvas, ctx, balls) {
 
     if (activeTouchZone === "ballInHand") {
       handleBallInHandPointerUp();
+      clearMobileTouchSession();
+      return;
+    }
+
+    if (activeTouchZone === "spin") {
       clearMobileTouchSession();
       return;
     }
@@ -1123,7 +1242,55 @@ export function initCue(canvas, ctx, balls) {
   window.addEventListener("scroll", syncTouchUILayout, { passive: true });
 
   /**
-   * 每帧绘制瞄准线与球杆 / 自由球高亮
+   * 绘制右上角加塞控件
+   */
+  function drawSpinControl() {
+    const center = getSpinControlCenter();
+    const maxDistance = SPIN_OUTER_RADIUS - SPIN_DOT_RADIUS;
+    const dotX = center.x + spin.x * maxDistance;
+    const dotY = center.y + spin.y * maxDistance;
+
+    ctx.save();
+
+    // 外圈
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, SPIN_OUTER_RADIUS, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(55, 55, 55, 0.92)";
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+    ctx.stroke();
+
+    // 内部母球
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, SPIN_INNER_RADIUS, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+
+    // 轻微十字参考线
+    ctx.beginPath();
+    ctx.moveTo(center.x - 10, center.y);
+    ctx.lineTo(center.x + 10, center.y);
+    ctx.moveTo(center.x, center.y - 10);
+    ctx.lineTo(center.x, center.y + 10);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.18)";
+    ctx.stroke();
+
+    // 红色击球点
+    ctx.beginPath();
+    ctx.arc(dotX, dotY, SPIN_DOT_RADIUS, 0, Math.PI * 2);
+    ctx.fillStyle = "#e53935";
+    ctx.fill();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(120, 0, 0, 0.8)";
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  /**
+   * 每帧绘制瞄准线与球杆 / 自由球高亮 / 加塞控件
    */
   function drawCue() {
     const cueBall = getCueBall(balls);
@@ -1156,6 +1323,7 @@ export function initCue(canvas, ctx, balls) {
       ctx.stroke();
       ctx.restore();
 
+      drawSpinControl();
       return;
     }
 
@@ -1188,7 +1356,7 @@ export function initCue(canvas, ctx, balls) {
       ghostY
     } = collisionInfo;
 
-    // -------- 第一条线：母球运动轨迹线（保留原逻辑）--------
+    // -------- 第一条线：母球运动轨迹线 --------
     const aimStartX = cueBall.x + dirX * (cueBall.radius + 2);
     const aimStartY = cueBall.y + dirY * (cueBall.radius + 2);
 
@@ -1202,7 +1370,7 @@ export function initCue(canvas, ctx, balls) {
     ctx.stroke();
     ctx.restore();
 
-    // -------- 新增：碰撞预测辅助线 --------
+    // -------- 碰撞预测辅助线 --------
     if (hitBall && ghostX != null && ghostY != null) {
       const normalDX = hitBall.x - ghostX;
       const normalDY = hitBall.y - ghostY;
@@ -1212,7 +1380,7 @@ export function initCue(canvas, ctx, balls) {
         const nx = normalDX / normalLength;
         const ny = normalDY / normalLength;
 
-        // 1) 幽灵球
+        // 幽灵球
         ctx.save();
         ctx.beginPath();
         ctx.fillStyle = "rgba(255, 255, 255, 0.22)";
@@ -1223,8 +1391,7 @@ export function initCue(canvas, ctx, balls) {
         ctx.stroke();
         ctx.restore();
 
-        // 2) 目标球运动预测线
-        // 先画幽灵球圆心 -> 目标球圆心
+        // 目标球预测线
         ctx.save();
         ctx.beginPath();
         ctx.lineWidth = 2;
@@ -1253,9 +1420,7 @@ export function initCue(canvas, ctx, balls) {
         ctx.stroke();
         ctx.restore();
 
-        // 3) 母球碰撞后反弹预测线
-        // 等质量弹性碰撞下，母球只保留切向分量
-        // 切向方向为法线的垂线方向
+        // 母球反弹预测线
         if (previewPower > 0) {
           const tangentAX = -ny;
           const tangentAY = nx;
@@ -1291,8 +1456,6 @@ export function initCue(canvas, ctx, balls) {
     }
 
     // -------- 球杆 --------
-    // 桌面端保持原逻辑：按住才后拉
-    // 移动端不后拉，力度由左条锁定，tap 出杆
     const chargeRatio = currentPower / MAX_POWER;
     const pullBack = isCharging() ? chargeRatio * CUE_PULLBACK_MAX : 0;
 
@@ -1320,6 +1483,9 @@ export function initCue(canvas, ctx, balls) {
     ctx.lineTo(cueNearX + dirX * 12, cueNearY + dirY * 12);
     ctx.stroke();
     ctx.restore();
+
+    // -------- 加塞控件 --------
+    drawSpinControl();
   }
 
   // 初始化
