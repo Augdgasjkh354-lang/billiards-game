@@ -45,20 +45,9 @@ function createBall(id, x, y) {
 
 /**
  * 计算三角阵中 15 颗目标球的位置
- * 顶点位于台面内部区域右侧 1/4 处，垂直居中。
+ * 顶点位于台面内部区域右侧 1/4 处，垂直居中
  *
- * 行数：
- * 1
- * 2
- * 3
- * 4
- * 5
- *
- * 返回格式：
- * [
- *   { row, col, x, y },
- *   ...
- * ]
+ * @returns {Array<{row:number,col:number,x:number,y:number}>}
  */
 function getRackPositions() {
   const innerWidth = TABLE_WIDTH - TABLE_PADDING * 2;
@@ -67,7 +56,6 @@ function getRackPositions() {
   const apexX = TABLE_PADDING + innerWidth * 0.75;
   const centerY = TABLE_PADDING + innerHeight / 2;
 
-  // 等边三角紧密排列时，相邻两列球心的水平间距
   const horizontalSpacing = Math.sqrt(3) * BALL_RADIUS;
   const verticalSpacing = BALL_RADIUS * 2;
 
@@ -93,18 +81,11 @@ function getRackPositions() {
 
 /**
  * 初始化所有球
- * 规则：
- * - 0 号球为母球
- * - 1~15 为目标球
- * - 8 号球固定放在三角阵正中间（第 3 行中间）
- * - 其余球随机，但按照三角阵填充顺序做“纯色 / 花色交替”
- *
  * @returns {object[]}
  */
 export function initBalls() {
   const balls = [];
 
-  // 台面内部区域
   const innerWidth = TABLE_WIDTH - TABLE_PADDING * 2;
   const innerHeight = TABLE_HEIGHT - TABLE_PADDING * 2;
   const centerY = TABLE_PADDING + innerHeight / 2;
@@ -113,10 +94,9 @@ export function initBalls() {
   const cueBallX = TABLE_PADDING + innerWidth * 0.25;
   balls.push(createBall(0, cueBallX, centerY));
 
-  // 三角阵位置
   const rackPositions = getRackPositions();
 
-  // 中间位置固定为 8 号球：第 3 行中间（row=2, col=1）
+  // 8 号球固定在三角阵正中间
   const centerIndex = rackPositions.findIndex(
     (pos) => pos.row === 2 && pos.col === 1
   );
@@ -126,14 +106,10 @@ export function initBalls() {
 
   let solidIndex = 0;
   let stripeIndex = 0;
-
-  // 随机决定三角阵第一个位置从纯色还是花色开始
   const startWithSolid = Math.random() < 0.5;
-
   let placementIndex = 0;
 
   rackPositions.forEach((pos, index) => {
-    // 中间固定放 8 号球
     if (index === centerIndex) {
       balls.push(createBall(8, pos.x, pos.y));
       return;
@@ -161,75 +137,168 @@ export function initBalls() {
 }
 
 /**
- * 绘制球上的数字
+ * 将十六进制颜色转为 RGB
+ * @param {string} hex
+ * @returns {{ r:number, g:number, b:number }}
+ */
+function hexToRgb(hex) {
+  const normalized = hex.replace("#", "");
+  const value = normalized.length === 3
+    ? normalized.split("").map((c) => c + c).join("")
+    : normalized;
+
+  const intValue = Number.parseInt(value, 16);
+
+  return {
+    r: (intValue >> 16) & 255,
+    g: (intValue >> 8) & 255,
+    b: intValue & 255
+  };
+}
+
+/**
+ * 将颜色变暗
+ * amount=0.3 表示变暗 30%
+ *
+ * @param {string} hex
+ * @param {number} amount
+ * @returns {string}
+ */
+function darkenColor(hex, amount = 0.3) {
+  const { r, g, b } = hexToRgb(hex);
+  const factor = 1 - amount;
+
+  const nr = Math.max(0, Math.round(r * factor));
+  const ng = Math.max(0, Math.round(g * factor));
+  const nb = Math.max(0, Math.round(b * factor));
+
+  return `rgb(${nr}, ${ng}, ${nb})`;
+}
+
+/**
+ * 绘制球体基础圆
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {number} x
+ * @param {number} y
+ * @param {number} radius
+ * @param {string} fillStyle
+ * @param {string} strokeStyle
+ */
+function drawBaseSphere(ctx, x, y, radius, fillStyle, strokeStyle) {
+  ctx.save();
+
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = fillStyle;
+  ctx.fill();
+
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = strokeStyle;
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+/**
+ * 绘制统一高光
+ * 默认高光：
+ * - 中心：左上偏移 (-radius*0.3, -radius*0.35)
+ * - 半径：radius*0.6
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {number} x
+ * @param {number} y
+ * @param {number} radius
+ * @param {number} strength
+ */
+function drawHighlight(ctx, x, y, radius, strength = 0.85) {
+  ctx.save();
+
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.clip();
+
+  const gradient = ctx.createRadialGradient(
+    x - radius * 0.3,
+    y - radius * 0.35,
+    0,
+    x - radius * 0.3,
+    y - radius * 0.35,
+    radius * 0.6
+  );
+
+  gradient.addColorStop(0, `rgba(255, 255, 255, ${strength})`);
+  gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = gradient;
+  ctx.fill();
+
+  ctx.restore();
+}
+
+/**
+ * 绘制数字
+ *
  * @param {CanvasRenderingContext2D} ctx
  * @param {object} ball
+ * @param {string} fillColor
+ * @param {number} yOffset
  */
-function drawBallNumber(ctx, ball) {
+function drawBallNumber(ctx, ball, fillColor, yOffset = 0) {
   ctx.save();
 
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.font = `bold ${Math.max(12, ball.radius)}px Arial`;
+  ctx.font = `bold ${ball.radius}px Arial`;
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.75)";
+  ctx.fillStyle = fillColor;
 
-  // 先描边再填充，保证浅色球也能看清数字
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
-  ctx.strokeText(String(ball.id), ball.x, ball.y);
-
-  ctx.fillStyle = "#ffffff";
-  ctx.fillText(String(ball.id), ball.x, ball.y);
+  ctx.strokeText(String(ball.id), ball.x, ball.y + yOffset);
+  ctx.fillText(String(ball.id), ball.x, ball.y + yOffset);
 
   ctx.restore();
 }
 
 /**
- * 绘制纯色球
+ * 绘制纯色球（1-7）
  * @param {CanvasRenderingContext2D} ctx
  * @param {object} ball
  */
 function drawSolidBall(ctx, ball) {
-  ctx.save();
+  drawBaseSphere(
+    ctx,
+    ball.x,
+    ball.y,
+    ball.radius,
+    ball.color,
+    darkenColor(ball.color, 0.3)
+  );
 
-  ctx.beginPath();
-  ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
-  ctx.fillStyle = ball.color;
-  ctx.fill();
-
-  ctx.lineWidth = 1.5;
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.35)";
-  ctx.stroke();
-
-  ctx.restore();
-
-  // 母球不显示数字
-  if (ball.id !== 0) {
-    drawBallNumber(ctx, ball);
-  }
+  drawHighlight(ctx, ball.x, ball.y, ball.radius, 0.85);
+  drawBallNumber(ctx, ball, "#ffffff");
 }
 
 /**
- * 绘制花色球
- * 白底圆 + 中间横向色带 + 白色数字
+ * 绘制花色球（9-15）
  * @param {CanvasRenderingContext2D} ctx
  * @param {object} ball
  */
 function drawStripeBall(ctx, ball) {
-  ctx.save();
+  const outlineColor = darkenColor(ball.color, 0.3);
 
-  // 白底球体
-  ctx.beginPath();
-  ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
-  ctx.fillStyle = "#ffffff";
-  ctx.fill();
+  // 白底球
+  drawBaseSphere(ctx, ball.x, ball.y, ball.radius, "#ffffff", outlineColor);
 
-  // 裁剪后绘制横向色带
+  // 中间色带
   ctx.save();
   ctx.beginPath();
   ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
   ctx.clip();
 
-  const stripeHeight = ball.radius * 1.2;
+  const stripeHeight = ball.radius;
   ctx.fillStyle = ball.color;
   ctx.fillRect(
     ball.x - ball.radius,
@@ -240,16 +309,77 @@ function drawStripeBall(ctx, ball) {
 
   ctx.restore();
 
-  // 外边线
+  // 重新描边，保证色带后边缘清晰
+  ctx.save();
   ctx.beginPath();
   ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
   ctx.lineWidth = 1.5;
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.35)";
+  ctx.strokeStyle = outlineColor;
   ctx.stroke();
-
   ctx.restore();
 
-  drawBallNumber(ctx, ball);
+  drawHighlight(ctx, ball.x, ball.y, ball.radius, 0.85);
+  drawBallNumber(ctx, ball, ball.color);
+}
+
+/**
+ * 绘制 8 号球
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {object} ball
+ */
+function drawEightBall(ctx, ball) {
+  drawBaseSphere(
+    ctx,
+    ball.x,
+    ball.y,
+    ball.radius,
+    "#000000",
+    "rgb(20, 20, 20)"
+  );
+
+  // 中间白色小圆
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(ball.x, ball.y, ball.radius * 0.4, 0, Math.PI * 2);
+  ctx.fillStyle = "#ffffff";
+  ctx.fill();
+
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.25)";
+  ctx.stroke();
+  ctx.restore();
+
+  drawHighlight(ctx, ball.x, ball.y, ball.radius, 0.85);
+
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = `bold ${Math.max(10, ball.radius * 0.9)}px Arial`;
+  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+  ctx.fillStyle = "#000000";
+  ctx.strokeText("8", ball.x, ball.y);
+  ctx.fillText("8", ball.x, ball.y);
+  ctx.restore();
+}
+
+/**
+ * 绘制母球
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {object} ball
+ */
+function drawCueBall(ctx, ball) {
+  drawBaseSphere(
+    ctx,
+    ball.x,
+    ball.y,
+    ball.radius,
+    "#ffffff",
+    "rgb(180, 180, 180)"
+  );
+
+  // 母球高光更强一些
+  drawHighlight(ctx, ball.x, ball.y, ball.radius, 0.95);
 }
 
 /**
@@ -262,31 +392,21 @@ function drawBall(ctx, ball) {
     return;
   }
 
-  // 母球
   if (ball.id === 0) {
-    drawSolidBall(ctx, {
-      ...ball,
-      color: "#ffffff"
-    });
+    drawCueBall(ctx, ball);
     return;
   }
 
-  // 8 号球
   if (ball.id === 8) {
-    drawSolidBall(ctx, {
-      ...ball,
-      color: "#000000"
-    });
+    drawEightBall(ctx, ball);
     return;
   }
 
-  // 花色球
   if (ball.isStripe) {
     drawStripeBall(ctx, ball);
     return;
   }
 
-  // 纯色球
   drawSolidBall(ctx, ball);
 }
 
