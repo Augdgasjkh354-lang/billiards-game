@@ -7,6 +7,19 @@ import {
 } from "./constants.js";
 
 /**
+ * 进袋动画队列
+ * 每项：
+ * {
+ *   ball: { ...球快照 },
+ *   progress: 0~1,
+ *   pocketX,
+ *   pocketY
+ * }
+ */
+const pocketingAnimations = [];
+const POCKET_ANIMATION_STEP = 1 / 20;
+
+/**
  * 打乱数组顺序
  * @param {number[]} array
  * @returns {number[]}
@@ -176,6 +189,17 @@ function darkenColor(hex, amount = 0.3) {
 }
 
 /**
+ * 线性插值
+ * @param {number} start
+ * @param {number} end
+ * @param {number} t
+ * @returns {number}
+ */
+function lerp(start, end, t) {
+  return start + (end - start) * t;
+}
+
+/**
  * 绘制球体基础圆
  * @param {CanvasRenderingContext2D} ctx
  * @param {number} x
@@ -201,9 +225,6 @@ function drawBaseSphere(ctx, x, y, radius, fillStyle, strokeStyle) {
 
 /**
  * 绘制统一高光
- * 默认高光：
- * - 中心：左上偏移 (-radius*0.3, -radius*0.35)
- * - 半径：radius*0.6
  *
  * @param {CanvasRenderingContext2D} ctx
  * @param {number} x
@@ -289,10 +310,8 @@ function drawSolidBall(ctx, ball) {
 function drawStripeBall(ctx, ball) {
   const outlineColor = darkenColor(ball.color, 0.3);
 
-  // 白底球
   drawBaseSphere(ctx, ball.x, ball.y, ball.radius, "#ffffff", outlineColor);
 
-  // 中间色带
   ctx.save();
   ctx.beginPath();
   ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
@@ -309,7 +328,6 @@ function drawStripeBall(ctx, ball) {
 
   ctx.restore();
 
-  // 重新描边，保证色带后边缘清晰
   ctx.save();
   ctx.beginPath();
   ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
@@ -337,7 +355,6 @@ function drawEightBall(ctx, ball) {
     "rgb(20, 20, 20)"
   );
 
-  // 中间白色小圆
   ctx.save();
   ctx.beginPath();
   ctx.arc(ball.x, ball.y, ball.radius * 0.4, 0, Math.PI * 2);
@@ -378,7 +395,6 @@ function drawCueBall(ctx, ball) {
     "rgb(180, 180, 180)"
   );
 
-  // 母球高光更强一些
   drawHighlight(ctx, ball.x, ball.y, ball.radius, 0.95);
 }
 
@@ -411,12 +427,77 @@ function drawBall(ctx, ball) {
 }
 
 /**
- * 渲染所有未进袋的球
+ * 触发进袋动画
+ * @param {object} ball
+ * @param {number} pocketX
+ * @param {number} pocketY
+ */
+export function triggerPocketAnimation(ball, pocketX, pocketY) {
+  if (!ball || ball.id === 0) {
+    return;
+  }
+
+  pocketingAnimations.push({
+    ball: {
+      ...ball,
+      isPocketed: false
+    },
+    progress: 0,
+    pocketX,
+    pocketY
+  });
+}
+
+/**
+ * 更新进袋动画
+ */
+export function updatePocketingAnimations() {
+  for (let i = pocketingAnimations.length - 1; i >= 0; i -= 1) {
+    const animation = pocketingAnimations[i];
+    animation.progress += POCKET_ANIMATION_STEP;
+
+    if (animation.progress >= 1) {
+      pocketingAnimations.splice(i, 1);
+    }
+  }
+}
+
+/**
+ * 绘制所有球
+ * - 正常未进袋球
+ * - 正在播放进袋动画的球
+ *
  * @param {CanvasRenderingContext2D} ctx
  * @param {object[]} balls
  */
 export function drawBalls(ctx, balls) {
   balls.forEach((ball) => {
-    drawBall(ctx, ball);
+    if (!ball.isPocketed) {
+      drawBall(ctx, ball);
+    }
+  });
+
+  pocketingAnimations.forEach((animation) => {
+    const { ball, progress, pocketX, pocketY } = animation;
+    const t = Math.max(0, Math.min(1, progress));
+    const animatedRadius = ball.radius * (1 - t);
+    const animatedAlpha = 1 - t;
+
+    if (animatedRadius <= 0 || animatedAlpha <= 0) {
+      return;
+    }
+
+    const animatedBall = {
+      ...ball,
+      x: lerp(ball.x, pocketX, t),
+      y: lerp(ball.y, pocketY, t),
+      radius: animatedRadius,
+      isPocketed: false
+    };
+
+    ctx.save();
+    ctx.globalAlpha = animatedAlpha;
+    drawBall(ctx, animatedBall);
+    ctx.restore();
   });
 }
