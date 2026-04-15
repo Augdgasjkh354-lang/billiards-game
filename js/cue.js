@@ -9,15 +9,18 @@ import {
  * 球杆系统配置
  */
 const MAX_POWER = 25;
+const DEFAULT_MOBILE_POWER = 12;
 const FULL_CHARGE_TIME = 1200; // 桌面端按住约 1.2 秒充满
 const CUE_LENGTH = 150;
 const CUE_BASE_OFFSET = BALL_RADIUS + 14;
 const CUE_PULLBACK_MAX = 28;
 
-// 移动端：单指水平滑动旋转灵敏度（弧度 / 像素）
+// 移动端：球桌区域水平滑动旋转灵敏度（弧度 / px）
 const MOBILE_AIM_ROTATION_SPEED = 0.015;
-// 移动端：垂直下拉多少像素视为满力
-const MOBILE_CHARGE_FULL_DRAG = 160;
+// 移动端：右侧微调条灵敏度（弧度 / px）
+const MOBILE_FINE_TUNE_SPEED = 0.002;
+// 移动端：tap 判定阈值
+const MOBILE_TAP_THRESHOLD = 10;
 
 /**
  * 判断当前是否所有球都静止
@@ -74,38 +77,6 @@ function getCanvasPoint(event, canvas) {
   return {
     x: (clientX - rect.left) * scaleX,
     y: (clientY - rect.top) * scaleY
-  };
-}
-
-/**
- * 获取多个触点的平均位置
- * @param {TouchEvent} event
- * @param {HTMLCanvasElement} canvas
- * @returns {{ x: number, y: number } | null}
- */
-function getAverageTouchPoint(event, canvas) {
-  if (!event.touches || event.touches.length === 0) {
-    return null;
-  }
-
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
-
-  let sumX = 0;
-  let sumY = 0;
-
-  for (let i = 0; i < event.touches.length; i += 1) {
-    sumX += event.touches[i].clientX;
-    sumY += event.touches[i].clientY;
-  }
-
-  const avgClientX = sumX / event.touches.length;
-  const avgClientY = sumY / event.touches.length;
-
-  return {
-    x: (avgClientX - rect.left) * scaleX,
-    y: (avgClientY - rect.top) * scaleY
   };
 }
 
@@ -252,15 +223,6 @@ function tryMoveCueBallToPoint(point, balls) {
 }
 
 /**
- * 判断触点是否在 canvas 右侧 1/3 区域
- * @param {{ x: number, y: number }} point
- * @returns {boolean}
- */
-function isInMobileChargeZone(point) {
-  return point.x >= TABLE_WIDTH * (2 / 3);
-}
-
-/**
  * 计算从母球出发，沿指定方向到达库边的距离
  * @param {Object} cueBall
  * @param {number} dirX
@@ -340,6 +302,50 @@ function getAimEndPoint(cueBall, balls, angle) {
 }
 
 /**
+ * 通过 clientX 判断触点起始区域
+ * @param {number} clientX
+ * @param {HTMLElement} leftBarEl
+ * @param {HTMLCanvasElement} canvas
+ * @param {HTMLElement} rightBarEl
+ * @returns {'left' | 'canvas' | 'right' | null}
+ */
+function getTouchZoneFromClientX(clientX, leftBarEl, canvas, rightBarEl) {
+  const leftRect = leftBarEl.getBoundingClientRect();
+  const canvasRect = canvas.getBoundingClientRect();
+  const rightRect = rightBarEl.getBoundingClientRect();
+
+  if (clientX >= leftRect.left && clientX <= leftRect.right) {
+    return "left";
+  }
+
+  if (clientX >= canvasRect.left && clientX <= canvasRect.right) {
+    return "canvas";
+  }
+
+  if (clientX >= rightRect.left && clientX <= rightRect.right) {
+    return "right";
+  }
+
+  return null;
+}
+
+/**
+ * 从 touchList 中取指定 identifier 的 touch
+ * @param {TouchList} touchList
+ * @param {number} identifier
+ * @returns {Touch | null}
+ */
+function findTouchById(touchList, identifier) {
+  for (let i = 0; i < touchList.length; i += 1) {
+    if (touchList[i].identifier === identifier) {
+      return touchList[i];
+    }
+  }
+
+  return null;
+}
+
+/**
  * 初始化球杆系统
  */
 export function initCue(canvas, ctx, balls) {
@@ -350,32 +356,145 @@ export function initCue(canvas, ctx, balls) {
   let mouseChargeStartTime = 0;
   let mousePower = 0;
 
-  // 移动端状态：两阶段
-  // idle | aim | charge
-  let mobileMode = "idle";
+  // 移动端锁定力度：不会自动归零
+  let mobileLockedPower = DEFAULT_MOBILE_POWER;
 
-  // 旋转瞄准
-  let mobileAimStartPoint = null;
-  let mobileAimStartAngle = 0;
-
-  // 拉杆蓄力
-  let mobileChargeStartPoint = null;
-  let mobilePower = 0;
+  // 移动端当前手势会话
+  let activeTouchId = null;
+  let activeTouchZone = null; // left | canvas | right | ballInHand
+  let touchStartClientX = 0;
+  let touchStartClientY = 0;
+  let touchStartAngle = 0;
+  let draggingBallInHand = false;
 
   // 自由球手摆
   let ballInHandActive = false;
-  let draggingBallInHand = false;
 
   // 总开关
   let interactionEnabled = true;
 
   const powerFillEl = document.querySelector(".power-fill");
 
-  canvas.style.touchAction = "none";
-  updatePowerBar(powerFillEl, 0);
+  // -------------------------
+  // 创建左右侧移动端控制条
+  // -------------------------
+
+  const leftBarEl = document.createElement("div");
+  const leftBarFillEl = document.createElement("div");
+  const leftBarLabelEl = document.createElement("div");
+
+  leftBarEl.id = "mobilePowerBar";
+  leftBarEl.style.position = "fixed";
+  leftBarEl.style.width = "40px";
+  leftBarEl.style.borderRadius = "12px";
+  leftBarEl.style.background = "rgba(255,255,255,0.08)";
+  leftBarEl.style.border = "1px solid rgba(255,255,255,0.16)";
+  leftBarEl.style.overflow = "hidden";
+  leftBarEl.style.zIndex = "20";
+  leftBarEl.style.touchAction = "none";
+  leftBarEl.style.userSelect = "none";
+  leftBarEl.style.webkitUserSelect = "none";
+
+  leftBarFillEl.style.position = "absolute";
+  leftBarFillEl.style.left = "0";
+  leftBarFillEl.style.right = "0";
+  leftBarFillEl.style.bottom = "0";
+  leftBarFillEl.style.height = "0%";
+  leftBarFillEl.style.background = "linear-gradient(180deg, rgba(255,255,255,0.3), rgba(255,255,255,0.75))";
+
+  leftBarLabelEl.textContent = "力度";
+  leftBarLabelEl.style.position = "absolute";
+  leftBarLabelEl.style.top = "8px";
+  leftBarLabelEl.style.left = "50%";
+  leftBarLabelEl.style.transform = "translateX(-50%)";
+  leftBarLabelEl.style.fontSize = "12px";
+  leftBarLabelEl.style.color = "#fff";
+  leftBarLabelEl.style.pointerEvents = "none";
+  leftBarLabelEl.style.writingMode = "vertical-rl";
+  leftBarLabelEl.style.textOrientation = "upright";
+
+  leftBarEl.appendChild(leftBarFillEl);
+  leftBarEl.appendChild(leftBarLabelEl);
+
+  const rightBarEl = document.createElement("div");
+  const rightBarGuideEl = document.createElement("div");
+  const rightBarLabelEl = document.createElement("div");
+
+  rightBarEl.id = "mobileFineTuneBar";
+  rightBarEl.style.position = "fixed";
+  rightBarEl.style.width = "40px";
+  rightBarEl.style.borderRadius = "12px";
+  rightBarEl.style.background = "rgba(255,255,255,0.08)";
+  rightBarEl.style.border = "1px solid rgba(255,255,255,0.16)";
+  rightBarEl.style.overflow = "hidden";
+  rightBarEl.style.zIndex = "20";
+  rightBarEl.style.touchAction = "none";
+  rightBarEl.style.userSelect = "none";
+  rightBarEl.style.webkitUserSelect = "none";
+
+  rightBarGuideEl.style.position = "absolute";
+  rightBarGuideEl.style.left = "50%";
+  rightBarGuideEl.style.top = "10%";
+  rightBarGuideEl.style.bottom = "10%";
+  rightBarGuideEl.style.width = "2px";
+  rightBarGuideEl.style.transform = "translateX(-50%)";
+  rightBarGuideEl.style.background = "rgba(255,255,255,0.35)";
+
+  rightBarLabelEl.textContent = "微调";
+  rightBarLabelEl.style.position = "absolute";
+  rightBarLabelEl.style.top = "8px";
+  rightBarLabelEl.style.left = "50%";
+  rightBarLabelEl.style.transform = "translateX(-50%)";
+  rightBarLabelEl.style.fontSize = "12px";
+  rightBarLabelEl.style.color = "#fff";
+  rightBarLabelEl.style.pointerEvents = "none";
+  rightBarLabelEl.style.writingMode = "vertical-rl";
+  rightBarLabelEl.style.textOrientation = "upright";
+
+  rightBarEl.appendChild(rightBarGuideEl);
+  rightBarEl.appendChild(rightBarLabelEl);
+
+  document.body.appendChild(leftBarEl);
+  document.body.appendChild(rightBarEl);
 
   /**
-   * 清空桌面端蓄力
+   * 同步左右控制条位置
+   */
+  function syncTouchUILayout() {
+    const rect = canvas.getBoundingClientRect();
+    const gap = 10;
+    const width = 40;
+    const left = Math.max(8, rect.left - width - gap);
+    const right = Math.min(window.innerWidth - width - 8, rect.right + gap);
+
+    leftBarEl.style.left = `${left}px`;
+    leftBarEl.style.top = `${rect.top}px`;
+    leftBarEl.style.height = `${rect.height}px`;
+
+    rightBarEl.style.left = `${right}px`;
+    rightBarEl.style.top = `${rect.top}px`;
+    rightBarEl.style.height = `${rect.height}px`;
+  }
+
+  /**
+   * 更新移动端左侧力度条视觉
+   */
+  function updateMobilePowerBarUI() {
+    const percent = (mobileLockedPower / MAX_POWER) * 100;
+    leftBarFillEl.style.height = `${percent}%`;
+  }
+
+  /**
+   * 更新交互显隐
+   */
+  function updateTouchUIVisibility() {
+    const display = interactionEnabled ? "block" : "none";
+    leftBarEl.style.display = display;
+    rightBarEl.style.display = display;
+  }
+
+  /**
+   * 清空桌面端蓄力状态
    */
   function clearMouseChargeState() {
     isMouseCharging = false;
@@ -384,23 +503,23 @@ export function initCue(canvas, ctx, balls) {
   }
 
   /**
-   * 清空移动端状态
+   * 清空移动端手势会话
    */
-  function clearMobileState() {
-    mobileMode = "idle";
-    mobileAimStartPoint = null;
-    mobileAimStartAngle = 0;
-    mobileChargeStartPoint = null;
-    mobilePower = 0;
+  function clearMobileTouchSession() {
+    activeTouchId = null;
+    activeTouchZone = null;
+    touchStartClientX = 0;
+    touchStartClientY = 0;
+    touchStartAngle = 0;
+    draggingBallInHand = false;
   }
 
   /**
-   * 清空全部蓄力状态
+   * 清空全部临时状态
    */
-  function clearAllChargeState() {
+  function clearAllTemporaryState() {
     clearMouseChargeState();
-    clearMobileState();
-    updatePowerBar(powerFillEl, 0);
+    clearMobileTouchSession();
   }
 
   /**
@@ -408,7 +527,7 @@ export function initCue(canvas, ctx, balls) {
    * @returns {boolean}
    */
   function isCharging() {
-    return isMouseCharging || mobileMode === "charge";
+    return isMouseCharging;
   }
 
   /**
@@ -420,11 +539,21 @@ export function initCue(canvas, ctx, balls) {
       return mousePower;
     }
 
-    if (mobileMode === "charge") {
-      return mobilePower;
+    return 0;
+  }
+
+  /**
+   * 同步底部力度条
+   * - 桌面端按住时显示 mousePower
+   * - 否则显示移动端锁定力度
+   */
+  function syncBottomPowerBar() {
+    if (isMouseCharging) {
+      updatePowerBar(powerFillEl, mousePower);
+      return;
     }
 
-    return 0;
+    updatePowerBar(powerFillEl, mobileLockedPower);
   }
 
   /**
@@ -453,123 +582,19 @@ export function initCue(canvas, ctx, balls) {
   }
 
   /**
-   * 开始移动端旋转瞄准
-   * @param {TouchEvent} event
+   * 用当前锁定力度出杆（移动端）
    */
-  function startMobileAim(event) {
-    const point = getCanvasPoint(event, canvas);
-    if (!point) {
-      return;
-    }
-
-    mobileMode = "aim";
-    mobileAimStartPoint = point;
-    mobileAimStartAngle = aimAngle;
-    mobilePower = 0;
-    updatePowerBar(powerFillEl, 0);
-  }
-
-  /**
-   * 开始移动端拉杆蓄力
-   * 支持：
-   * - 双指任意位置
-   * - 单指从右侧 1/3 区域开始
-   *
-   * @param {TouchEvent} event
-   */
-  function startMobileCharge(event) {
-    const point =
-      event.touches.length >= 2
-        ? getAverageTouchPoint(event, canvas)
-        : getCanvasPoint(event, canvas);
-
-    if (!point) {
-      return;
-    }
-
-    mobileMode = "charge";
-    mobileChargeStartPoint = point;
-    mobilePower = 0;
-    updatePowerBar(powerFillEl, 0);
-  }
-
-  /**
-   * 更新移动端旋转瞄准
-   * 单指左右滑动，只旋转，不蓄力
-   *
-   * @param {TouchEvent} event
-   */
-  function updateMobileAim(event) {
-    if (mobileMode !== "aim" || !mobileAimStartPoint) {
-      return;
-    }
-
-    const point = getCanvasPoint(event, canvas);
-    if (!point) {
-      return;
-    }
-
-    const deltaX = point.x - mobileAimStartPoint.x;
-    aimAngle = mobileAimStartAngle + deltaX * MOBILE_AIM_ROTATION_SPEED;
-    mobilePower = 0;
-    updatePowerBar(powerFillEl, 0);
-  }
-
-  /**
-   * 更新移动端拉杆蓄力
-   * 纵向向下拖动，力度增大
-   *
-   * @param {TouchEvent} event
-   */
-  function updateMobileCharge(event) {
-    if (mobileMode !== "charge" || !mobileChargeStartPoint) {
-      return;
-    }
-
-    const point =
-      event.touches.length >= 2
-        ? getAverageTouchPoint(event, canvas)
-        : getCanvasPoint(event, canvas);
-
-    if (!point) {
-      return;
-    }
-
-    const dragY = point.y - mobileChargeStartPoint.y;
-    mobilePower = clamp(
-      (dragY / MOBILE_CHARGE_FULL_DRAG) * MAX_POWER,
-      0,
-      MAX_POWER
-    );
-
-    updatePowerBar(powerFillEl, mobilePower);
-  }
-
-  /**
-   * 执行移动端击球
-   */
-  function shootMobile() {
-    if (mobileMode !== "charge") {
-      clearMobileState();
-      updatePowerBar(powerFillEl, 0);
-      return;
-    }
-
+  function shootWithLockedPower() {
     const cueBall = getCueBall(balls);
     if (!cueBall || cueBall.isPocketed) {
-      clearMobileState();
-      updatePowerBar(powerFillEl, 0);
       return;
     }
 
     const dirX = Math.cos(aimAngle);
     const dirY = Math.sin(aimAngle);
 
-    cueBall.vx = dirX * mobilePower;
-    cueBall.vy = dirY * mobilePower;
-
-    clearMobileState();
-    updatePowerBar(powerFillEl, 0);
+    cueBall.vx = dirX * mobileLockedPower;
+    cueBall.vy = dirY * mobileLockedPower;
   }
 
   /**
@@ -581,7 +606,7 @@ export function initCue(canvas, ctx, balls) {
       return;
     }
 
-    clearAllChargeState();
+    clearAllTemporaryState();
 
     const startPos = findBallInHandStartPosition(balls);
     cueBall.x = startPos.x;
@@ -591,7 +616,6 @@ export function initCue(canvas, ctx, balls) {
     cueBall.isPocketed = false;
 
     ballInHandActive = true;
-    draggingBallInHand = false;
   }
 
   /**
@@ -600,7 +624,6 @@ export function initCue(canvas, ctx, balls) {
   function confirmBallInHand() {
     ballInHandActive = false;
     draggingBallInHand = false;
-    updatePowerBar(powerFillEl, 0);
   }
 
   /**
@@ -670,7 +693,7 @@ export function initCue(canvas, ctx, balls) {
     isMouseCharging = true;
     mouseChargeStartTime = performance.now();
     mousePower = 0;
-    updatePowerBar(powerFillEl, 0);
+    syncBottomPowerBar();
   }
 
   /**
@@ -684,7 +707,8 @@ export function initCue(canvas, ctx, balls) {
 
     const cueBall = getCueBall(balls);
     if (!cueBall || cueBall.isPocketed) {
-      clearAllChargeState();
+      clearMouseChargeState();
+      syncBottomPowerBar();
       return;
     }
 
@@ -697,7 +721,8 @@ export function initCue(canvas, ctx, balls) {
     cueBall.vx = dirX * power;
     cueBall.vy = dirY * power;
 
-    clearAllChargeState();
+    clearMouseChargeState();
+    syncBottomPowerBar();
   }
 
   /**
@@ -710,8 +735,11 @@ export function initCue(canvas, ctx, balls) {
     if (!enabled) {
       ballInHandActive = false;
       draggingBallInHand = false;
-      clearAllChargeState();
+      clearAllTemporaryState();
     }
+
+    updateTouchUIVisibility();
+    syncBottomPowerBar();
   }
 
   /**
@@ -721,7 +749,42 @@ export function initCue(canvas, ctx, balls) {
     aimAngle = 0;
     ballInHandActive = false;
     draggingBallInHand = false;
-    clearAllChargeState();
+    mobileLockedPower = DEFAULT_MOBILE_POWER;
+    clearAllTemporaryState();
+    updateMobilePowerBarUI();
+    syncBottomPowerBar();
+    syncTouchUILayout();
+  }
+
+  /**
+   * 通过 touch 对象构造 canvas 相对坐标
+   * @param {Touch} touch
+   * @returns {{ x: number, y: number }}
+   */
+  function touchToCanvasPoint(touch) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+
+    return {
+      x: (touch.clientX - rect.left) * scaleX,
+      y: (touch.clientY - rect.top) * scaleY
+    };
+  }
+
+  /**
+   * 根据左侧力度条中的触点位置设置锁定力度
+   * 顶部 = MAX_POWER，底部 = 0
+   * @param {Touch} touch
+   */
+  function updateLockedPowerFromTouch(touch) {
+    const rect = leftBarEl.getBoundingClientRect();
+    const relativeY = clamp(touch.clientY - rect.top, 0, rect.height);
+    const ratio = 1 - relativeY / rect.height;
+
+    mobileLockedPower = clamp(ratio * MAX_POWER, 0, MAX_POWER);
+    updateMobilePowerBarUI();
+    syncBottomPowerBar();
   }
 
   // -------------------------
@@ -760,7 +823,7 @@ export function initCue(canvas, ctx, balls) {
     }
 
     if (ballInHandActive) {
-      handleBallInHandPointerUp(event);
+      handleBallInHandPointerUp();
       return;
     }
 
@@ -768,131 +831,175 @@ export function initCue(canvas, ctx, balls) {
   });
 
   // -------------------------
-  // 移动端事件
+  // 移动端：三个区域独立
   // -------------------------
 
-  canvas.addEventListener(
-    "touchstart",
-    (event) => {
-      if (!interactionEnabled) {
+  function handleTouchStart(event) {
+    if (!interactionEnabled) {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (activeTouchId != null || event.changedTouches.length === 0) {
+      return;
+    }
+
+    const touch = event.changedTouches[0];
+    const zone = getTouchZoneFromClientX(
+      touch.clientX,
+      leftBarEl,
+      canvas,
+      rightBarEl
+    );
+
+    if (!zone) {
+      return;
+    }
+
+    // 自由球手摆时，只允许操作 canvas
+    if (ballInHandActive) {
+      if (zone !== "canvas") {
         return;
       }
 
-      event.preventDefault();
+      activeTouchId = touch.identifier;
+      activeTouchZone = "ballInHand";
+      handleBallInHandPointerDown({
+        touches: [touch],
+        changedTouches: [touch]
+      });
+      return;
+    }
 
-      if (ballInHandActive) {
-        handleBallInHandPointerDown(event);
-        return;
+    const cueBall = getCueBall(balls);
+    if (!cueBall || cueBall.isPocketed || !areAllBallsStopped(balls)) {
+      return;
+    }
+
+    activeTouchId = touch.identifier;
+    activeTouchZone = zone;
+    touchStartClientX = touch.clientX;
+    touchStartClientY = touch.clientY;
+    touchStartAngle = aimAngle;
+
+    if (zone === "left") {
+      updateLockedPowerFromTouch(touch);
+      return;
+    }
+
+    if (zone === "right") {
+      return;
+    }
+
+    // zone === "canvas"
+    // 球桌区域：单指滑动旋转，不自动出杆
+  }
+
+  function handleTouchMove(event) {
+    if (!interactionEnabled) {
+      return;
+    }
+
+    if (activeTouchId == null) {
+      return;
+    }
+
+    const touch = findTouchById(event.touches, activeTouchId);
+    if (!touch) {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (activeTouchZone === "ballInHand") {
+      handleBallInHandPointerMove({
+        touches: [touch],
+        changedTouches: [touch]
+      });
+      return;
+    }
+
+    if (activeTouchZone === "left") {
+      updateLockedPowerFromTouch(touch);
+      return;
+    }
+
+    if (activeTouchZone === "right") {
+      const deltaY = touch.clientY - touchStartClientY;
+      aimAngle = touchStartAngle + deltaY * MOBILE_FINE_TUNE_SPEED;
+      return;
+    }
+
+    if (activeTouchZone === "canvas") {
+      const deltaX = touch.clientX - touchStartClientX;
+      aimAngle = touchStartAngle + deltaX * MOBILE_AIM_ROTATION_SPEED;
+    }
+  }
+
+  function handleTouchEnd(event) {
+    if (!interactionEnabled || activeTouchId == null) {
+      return;
+    }
+
+    const touch = findTouchById(event.changedTouches, activeTouchId);
+    if (!touch) {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (activeTouchZone === "ballInHand") {
+      handleBallInHandPointerUp();
+      clearMobileTouchSession();
+      return;
+    }
+
+    if (activeTouchZone === "canvas") {
+      const dx = touch.clientX - touchStartClientX;
+      const dy = touch.clientY - touchStartClientY;
+      const distance = Math.hypot(dx, dy);
+
+      // 单指轻触：按当前锁定力度出杆
+      if (distance < MOBILE_TAP_THRESHOLD) {
+        shootWithLockedPower();
       }
+    }
 
-      const cueBall = getCueBall(balls);
-      if (!cueBall || cueBall.isPocketed || !areAllBallsStopped(balls)) {
-        return;
-      }
+    clearMobileTouchSession();
+    syncBottomPowerBar();
+  }
 
-      // 双指直接进入拉杆蓄力
-      if (event.touches.length >= 2) {
-        startMobileCharge(event);
-        return;
-      }
+  function handleTouchCancel(event) {
+    if (!interactionEnabled || activeTouchId == null) {
+      return;
+    }
 
-      // 单指：
-      // - 在右侧 1/3 区域开始 => 进入拉杆蓄力
-      // - 其他区域 => 进入旋转瞄准
-      const point = getCanvasPoint(event, canvas);
-      if (!point) {
-        return;
-      }
+    const touch = findTouchById(event.changedTouches, activeTouchId);
+    if (!touch) {
+      return;
+    }
 
-      if (isInMobileChargeZone(point)) {
-        startMobileCharge(event);
-      } else {
-        startMobileAim(event);
-      }
-    },
-    { passive: false }
-  );
+    event.preventDefault();
 
-  canvas.addEventListener(
-    "touchmove",
-    (event) => {
-      if (!interactionEnabled) {
-        return;
-      }
+    if (activeTouchZone === "ballInHand") {
+      handleBallInHandPointerUp();
+    }
 
-      event.preventDefault();
+    clearMobileTouchSession();
+    syncBottomPowerBar();
+  }
 
-      if (ballInHandActive) {
-        handleBallInHandPointerMove(event);
-        return;
-      }
+  canvas.addEventListener("touchstart", handleTouchStart, { passive: false });
+  leftBarEl.addEventListener("touchstart", handleTouchStart, { passive: false });
+  rightBarEl.addEventListener("touchstart", handleTouchStart, { passive: false });
 
-      // 旋转中如果加了第二根手指，切换到蓄力
-      if (mobileMode === "aim" && event.touches.length >= 2) {
-        startMobileCharge(event);
-        return;
-      }
+  window.addEventListener("touchmove", handleTouchMove, { passive: false });
+  window.addEventListener("touchend", handleTouchEnd, { passive: false });
+  window.addEventListener("touchcancel", handleTouchCancel, { passive: false });
 
-      if (mobileMode === "aim") {
-        updateMobileAim(event);
-        return;
-      }
-
-      if (mobileMode === "charge") {
-        updateMobileCharge(event);
-      }
-    },
-    { passive: false }
-  );
-
-  window.addEventListener(
-    "touchend",
-    (event) => {
-      if (!interactionEnabled) {
-        return;
-      }
-
-      event.preventDefault();
-
-      if (ballInHandActive) {
-        handleBallInHandPointerUp();
-        return;
-      }
-
-      // 只有拉杆蓄力阶段才会松手击球
-      if (mobileMode === "charge") {
-        shootMobile();
-        return;
-      }
-
-      // 旋转瞄准松手只结束旋转，不出杆
-      if (mobileMode === "aim") {
-        clearMobileState();
-        updatePowerBar(powerFillEl, 0);
-      }
-    },
-    { passive: false }
-  );
-
-  window.addEventListener(
-    "touchcancel",
-    (event) => {
-      if (!interactionEnabled) {
-        return;
-      }
-
-      event.preventDefault();
-
-      if (ballInHandActive) {
-        handleBallInHandPointerUp();
-        return;
-      }
-
-      clearMobileState();
-      updatePowerBar(powerFillEl, 0);
-    },
-    { passive: false }
-  );
+  window.addEventListener("resize", syncTouchUILayout);
+  window.addEventListener("scroll", syncTouchUILayout, { passive: true });
 
   /**
    * 每帧绘制瞄准线与球杆 / 自由球高亮
@@ -900,13 +1007,16 @@ export function initCue(canvas, ctx, balls) {
   function drawCue() {
     const cueBall = getCueBall(balls);
 
+    syncTouchUILayout();
+    updateMobilePowerBarUI();
+
     if (!cueBall || cueBall.isPocketed || !interactionEnabled) {
-      updatePowerBar(powerFillEl, 0);
+      syncBottomPowerBar();
       return;
     }
 
     if (ballInHandActive) {
-      updatePowerBar(powerFillEl, 0);
+      syncBottomPowerBar();
 
       ctx.save();
       ctx.beginPath();
@@ -929,17 +1039,18 @@ export function initCue(canvas, ctx, balls) {
     }
 
     if (!areAllBallsStopped(balls)) {
-      updatePowerBar(powerFillEl, 0);
+      syncBottomPowerBar();
       return;
     }
 
-    // 桌面端：按住时按时间累加力度
+    // 桌面端按住时按时间累加力度
     if (isMouseCharging) {
       const elapsed = performance.now() - mouseChargeStartTime;
       const ratio = Math.min(1, elapsed / FULL_CHARGE_TIME);
       mousePower = MAX_POWER * ratio;
-      updatePowerBar(powerFillEl, mousePower);
     }
+
+    syncBottomPowerBar();
 
     const dirX = Math.cos(aimAngle);
     const dirY = Math.sin(aimAngle);
@@ -960,6 +1071,8 @@ export function initCue(canvas, ctx, balls) {
     ctx.restore();
 
     // -------- 球杆 --------
+    // 桌面端保持原逻辑：按住才后拉
+    // 移动端不后拉，力度由左条锁定，tap 出杆
     const currentPower = getCurrentPower();
     const chargeRatio = currentPower / MAX_POWER;
     const pullBack = isCharging() ? chargeRatio * CUE_PULLBACK_MAX : 0;
@@ -989,6 +1102,12 @@ export function initCue(canvas, ctx, balls) {
     ctx.stroke();
     ctx.restore();
   }
+
+  // 初始化
+  syncTouchUILayout();
+  updateMobilePowerBarUI();
+  updateTouchUIVisibility();
+  syncBottomPowerBar();
 
   return {
     drawCue,
