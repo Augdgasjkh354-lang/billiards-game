@@ -11,14 +11,15 @@ import {
   handleBallCollisions,
   checkPockets
 } from "./physics.js";
+import { initCue } from "./cue.js";
 
 /**
- * 第三阶段：
+ * 第四阶段：
  * 1. 获取 canvas 和 context
  * 2. 设置 canvas 尺寸
  * 3. 初始化球
- * 4. 启动 requestAnimationFrame 主循环
- * 5. 每帧执行物理更新并重绘
+ * 4. 初始化球杆系统
+ * 5. 启动 requestAnimationFrame 主循环
  */
 
 const canvas = document.getElementById("gameCanvas");
@@ -31,12 +32,8 @@ canvas.height = TABLE_HEIGHT;
 // 初始化球
 const balls = initBalls();
 
-// 给母球一个测试初速度
-const cueBall = balls.find((ball) => ball.id === 0);
-if (cueBall) {
-  cueBall.vx = 18;
-  cueBall.vy = 0;
-}
+// 初始化球杆系统
+const { drawCue } = initCue(canvas, ctx, balls);
 
 /**
  * 绘制球桌外框（库边）
@@ -97,13 +94,14 @@ function render() {
   drawInnerBorder();
   drawPockets();
   drawBalls(ctx, balls);
+  drawCue();
 }
 
 /**
  * 主循环
  */
 function gameLoop() {
-  // 1. 更新位置和速度
+  // 1. 更新球的位置和速度
   updateBalls(balls);
 
   // 2. 处理每颗球与库边碰撞
