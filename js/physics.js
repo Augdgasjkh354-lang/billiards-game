@@ -12,6 +12,7 @@ import {
 function getCueBallResetPosition() {
   const innerWidth = TABLE_WIDTH - TABLE_PADDING * 2;
   const innerHeight = TABLE_HEIGHT - TABLE_PADDING * 2;
+
   return {
     x: TABLE_PADDING + innerWidth * 0.25,
     y: TABLE_PADDING + innerHeight / 2
@@ -31,18 +32,33 @@ export function updateBalls(balls) {
     if (Math.abs(ball.vx) < MIN_VELOCITY) ball.vx = 0;
     if (Math.abs(ball.vy) < MIN_VELOCITY) ball.vy = 0;
 
-    // 加塞持续漂移效果（母球运动中侧旋）
+    // 母球持续侧旋漂移效果
     if (ball.id === 0 && ball.spin) {
       const speed = Math.hypot(ball.vx, ball.vy);
+
       if (speed > MIN_VELOCITY) {
         const dirX = ball.vx / speed;
         const dirY = ball.vy / speed;
+
+        // 垂直于当前运动方向
         const perpX = -dirY;
         const perpY = dirX;
+
+        // 左右加塞产生轻微横向漂移
         ball.vx += perpX * ball.spin.x * 0.04;
         ball.vy += perpY * ball.spin.x * 0.04;
+
+        // 旋转逐渐衰减
         ball.spin.x *= 0.97;
         ball.spin.y *= 0.97;
+
+        // 清理极小旋转，避免长时间微漂移
+        if (Math.abs(ball.spin.x) < 0.01) ball.spin.x = 0;
+        if (Math.abs(ball.spin.y) < 0.01) ball.spin.y = 0;
+
+        if (ball.spin.x === 0 && ball.spin.y === 0) {
+          ball.spin = null;
+        }
       } else {
         ball.spin = null;
       }
@@ -58,11 +74,21 @@ export function handleWallCollisions(ball) {
   const minY = TABLE_PADDING + BALL_RADIUS;
   const maxY = TABLE_HEIGHT - TABLE_PADDING - BALL_RADIUS;
 
-  if (ball.x < minX) { ball.x = minX; ball.vx = -ball.vx; }
-  else if (ball.x > maxX) { ball.x = maxX; ball.vx = -ball.vx; }
+  if (ball.x < minX) {
+    ball.x = minX;
+    ball.vx = -ball.vx;
+  } else if (ball.x > maxX) {
+    ball.x = maxX;
+    ball.vx = -ball.vx;
+  }
 
-  if (ball.y < minY) { ball.y = minY; ball.vy = -ball.vy; }
-  else if (ball.y > maxY) { ball.y = maxY; ball.vy = -ball.vy; }
+  if (ball.y < minY) {
+    ball.y = minY;
+    ball.vy = -ball.vy;
+  } else if (ball.y > maxY) {
+    ball.y = maxY;
+    ball.vy = -ball.vy;
+  }
 }
 
 export function handleBallCollisions(balls) {
@@ -81,47 +107,76 @@ export function handleBallCollisions(balls) {
 
       if (distance >= minDistance) continue;
 
-      let nx, ny;
-      const safeDistance = distance || 0.0001;
-      nx = dx / safeDistance;
-      ny = dy / safeDistance;
+      let nx;
+      let ny;
+      let safeDistance = distance;
 
+      if (distance === 0) {
+        nx = 1;
+        ny = 0;
+        safeDistance = 0.0001;
+      } else {
+        nx = dx / distance;
+        ny = dy / distance;
+      }
+
+      // 切线方向
       const tx = -ny;
       const ty = nx;
 
+      // 法线方向速度
       const vA_n = ballA.vx * nx + ballA.vy * ny;
-      const vA_t = ballA.vx * tx + ballA.vy * ty;
       const vB_n = ballB.vx * nx + ballB.vy * ny;
+
+      // 切线方向速度
+      const vA_t = ballA.vx * tx + ballA.vy * ty;
       const vB_t = ballB.vx * tx + ballB.vy * ty;
 
-      ballA.vx = vB_n * nx + vA_t * tx;
-      ballA.vy = vB_n * ny + vA_t * ty;
-      ballB.vx = vA_n * nx + vB_t * tx;
-      ballB.vy = vA_n * ny + vB_t * ty;
+      // 等质量弹性碰撞：交换法线方向速度
+      const newVA_n = vB_n;
+      const newVB_n = vA_n;
 
-      // 碰撞后加塞效果
-      const cueBall = ballA.id === 0 ? ballA : (ballB.id === 0 ? ballB : null);
+      ballA.vx = newVA_n * nx + vA_t * tx;
+      ballA.vy = newVA_n * ny + vA_t * ty;
+
+      ballB.vx = newVB_n * nx + vB_t * tx;
+      ballB.vy = newVB_n * ny + vB_t * ty;
+
+      // 母球碰撞后的加塞效果
+      const cueBall =
+        ballA.id === 0 ? ballA : ballB.id === 0 ? ballB : null;
+
       if (cueBall && cueBall.spin) {
-        const sf = cueBall.spinFactor || 3;
-        // 碰撞法线方向（母球→目标球）
-        const cnx = cueBall.id === 0 ? nx : -nx;
-        const cny = cueBall.id === 0 ? ny : -ny;
-        // 高杆(spin.y<0)：母球沿法线继续前进；低杆(spin.y>0)：母球沿法线反弹
-        cueBall.vx += cnx * (-cueBall.spin.y) * sf;
-        cueBall.vy += cny * (-cueBall.spin.y) * sf;
-        // 左右加塞：母球侧向偏转
-        cueBall.vx += (-cny) * cueBall.spin.x * sf * 0.4;
-        cueBall.vy += cnx * cueBall.spin.x * sf * 0.4;
+        const spinFactor = cueBall.spinFactor || 3;
+
+        // 母球 -> 目标球的碰撞法线
+        const cnx = cueBall === ballA ? nx : -nx;
+        const cny = cueBall === ballA ? ny : -ny;
+
+        // 高杆 / 低杆
+        // spin.y < 0 => 高杆，继续前冲
+        // spin.y > 0 => 低杆，向后回拉
+        cueBall.vx += cnx * (-cueBall.spin.y) * spinFactor;
+        cueBall.vy += cny * (-cueBall.spin.y) * spinFactor;
+
+        // 左右加塞
+        cueBall.vx += -cny * cueBall.spin.x * spinFactor * 0.4;
+        cueBall.vy += cnx * cueBall.spin.x * spinFactor * 0.4;
+
+        // 碰撞后只生效一次
         cueBall.spin = null;
         cueBall.spinFactor = 0;
       }
 
       // 分离重叠
-      const overlap = (minDistance - safeDistance) / 2;
-      ballA.x -= nx * overlap;
-      ballA.y -= ny * overlap;
-      ballB.x += nx * overlap;
-      ballB.y += ny * overlap;
+      const overlap = minDistance - safeDistance;
+      const separation = overlap / 2;
+
+      ballA.x -= nx * separation;
+      ballA.y -= ny * separation;
+
+      ballB.x += nx * separation;
+      ballB.y += ny * separation;
     }
   }
 }
@@ -137,19 +192,27 @@ export function checkPockets(balls) {
       const dy = ball.y - pocket.y;
       const distance = Math.hypot(dx, dy);
 
-      if (distance < POCKET_RADIUS) {
+      // 使用每个袋口自己的半径
+      if (distance < (pocket.radius || POCKET_RADIUS)) {
+        // 母球进袋：复位到厨房区
         if (ball.id === 0) {
-          const reset = getCueBallResetPosition();
-          ball.x = reset.x;
-          ball.y = reset.y;
+          const resetPosition = getCueBallResetPosition();
+
+          ball.x = resetPosition.x;
+          ball.y = resetPosition.y;
           ball.vx = 0;
           ball.vy = 0;
+          ball.spin = null;
+          ball.spinFactor = 0;
+
           pocketedBallIds.push(ball.id);
           break;
         }
+
         ball.isPocketed = true;
         ball.vx = 0;
         ball.vy = 0;
+
         pocketedBallIds.push(ball.id);
         break;
       }
