@@ -28,12 +28,7 @@
     </footer>
   </div>
 
-  <!-- 按要求引入所有 JS 文件 -->
-  <script type="module" src="./js/constants.js"></script>
-  <script type="module" src="./js/physics.js"></script>
-  <script type="module" src="./js/balls.js"></script>
-  <script type="module" src="./js/cue.js"></script>
-  <script type="module" src="./js/rules.js"></script>
+  <!-- 只保留一个模块入口，其他文件由 game.js 内部 import -->
   <script type="module" src="./js/game.js"></script>
 </body>
 </html>
