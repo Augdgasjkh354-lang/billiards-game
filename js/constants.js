@@ -16,13 +16,14 @@ export const BALL_RADIUS = 12;
 export const POCKET_RADIUS = 18;
 
 // 6 个袋口坐标
-// 修正为：4 个角袋 + 左右两侧中袋
+// 四个角袋 + 上下中袋
 export const POCKETS = [
   { x: TABLE_PADDING, y: TABLE_PADDING, radius: POCKET_RADIUS }, // 左上
+  { x: TABLE_WIDTH / 2, y: TABLE_PADDING, radius: POCKET_RADIUS * 0.85 }, // 上中
   { x: TABLE_WIDTH - TABLE_PADDING, y: TABLE_PADDING, radius: POCKET_RADIUS }, // 右上
-  { x: TABLE_PADDING, y: TABLE_HEIGHT / 2, radius: POCKET_RADIUS * 0.85 }, // 左中
-  { x: TABLE_WIDTH - TABLE_PADDING, y: TABLE_HEIGHT / 2, radius: POCKET_RADIUS * 0.85 }, // 右中
+
   { x: TABLE_PADDING, y: TABLE_HEIGHT - TABLE_PADDING, radius: POCKET_RADIUS }, // 左下
+  { x: TABLE_WIDTH / 2, y: TABLE_HEIGHT - TABLE_PADDING, radius: POCKET_RADIUS * 0.85 }, // 下中
   { x: TABLE_WIDTH - TABLE_PADDING, y: TABLE_HEIGHT - TABLE_PADDING, radius: POCKET_RADIUS } // 右下
 ];
 
