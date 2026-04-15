@@ -34,7 +34,7 @@ const balls = initBalls();
 // 给母球一个测试初速度
 const cueBall = balls.find((ball) => ball.id === 0);
 if (cueBall) {
-  cueBall.vx = 8;
+  cueBall.vx = 18;
   cueBall.vy = 0;
 }
 
