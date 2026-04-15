@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Canvas 台球游戏</title>
+  <link rel="stylesheet" href="./css/style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="top-ui">
+      <div class="ui-panel">
+        <span>回合信息区域</span>
+      </div>
+    </header>
+
+    <main class="game-area">
+      <canvas id="gameCanvas"></canvas>
+    </main>
+
+    <footer class="bottom-ui">
+      <div class="ui-panel power-panel">
+        <span>力度条区域</span>
+        <div class="power-bar">
+          <div class="power-fill"></div>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- 按要求引入所有 JS 文件 -->
+  <script type="module" src="./js/constants.js"></script>
+  <script type="module" src="./js/physics.js"></script>
+  <script type="module" src="./js/balls.js"></script>
+  <script type="module" src="./js/cue.js"></script>
+  <script type="module" src="./js/rules.js"></script>
+  <script type="module" src="./js/game.js"></script>
+</body>
+</html>
