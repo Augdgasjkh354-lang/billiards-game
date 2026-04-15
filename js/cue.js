@@ -1110,10 +1110,18 @@ export function initCue(canvas, ctx, balls) {
     }
 
     if (zone === "canvas") {
-      const point = {
-        x: (touch.clientX - canvas.getBoundingClientRect().left) * (canvas.width / canvas.getBoundingClientRect().width),
-        y: (touch.clientY - canvas.getBoundingClientRect().top) * (canvas.height / canvas.getBoundingClientRect().height)
-      };
+      const point = getCanvasPoint(
+        {
+          touches: [touch],
+          changedTouches: [touch]
+        },
+        canvas
+      );
+
+      if (!point) {
+        clearMobileTouchSession();
+        return;
+      }
 
       if (isPointInSpinControl(point)) {
         activeTouchZone = "spin";

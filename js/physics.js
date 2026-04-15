@@ -19,6 +19,59 @@ function getCueBallResetPosition() {
   };
 }
 
+/**
+ * 为母球寻找一个不与其他球重叠的复位点。
+ * 优先默认开球点，不可用时在厨房区内网格搜索最近点。
+ *
+ * @param {Array<Object>} balls
+ * @returns {{ x:number, y:number }}
+ */
+function getCueBallSafeResetPosition(balls) {
+  const preferred = getCueBallResetPosition();
+
+  const isPositionFree = (x, y) => {
+    return balls.every((ball) => {
+      if (ball.id === 0 || ball.isPocketed) {
+        return true;
+      }
+
+      const distance = Math.hypot(ball.x - x, ball.y - y);
+      return distance >= BALL_RADIUS + ball.radius + 1;
+    });
+  };
+
+  if (isPositionFree(preferred.x, preferred.y)) {
+    return preferred;
+  }
+
+  const minX = TABLE_PADDING + BALL_RADIUS;
+  const maxX = TABLE_WIDTH / 2 - BALL_RADIUS;
+  const minY = TABLE_PADDING + BALL_RADIUS;
+  const maxY = TABLE_HEIGHT - TABLE_PADDING - BALL_RADIUS;
+
+  let bestPosition = preferred;
+  let bestDistanceSq = Infinity;
+
+  for (let x = minX; x <= maxX; x += 4) {
+    for (let y = minY; y <= maxY; y += 4) {
+      if (!isPositionFree(x, y)) {
+        continue;
+      }
+
+      const dx = x - preferred.x;
+      const dy = y - preferred.y;
+      const distanceSq = dx * dx + dy * dy;
+
+      if (distanceSq < bestDistanceSq) {
+        bestDistanceSq = distanceSq;
+        bestPosition = { x, y };
+      }
+    }
+  }
+
+  return bestPosition;
+}
+
 export function updateBalls(balls) {
   balls.forEach((ball) => {
     if (ball.isPocketed) return;
@@ -194,9 +247,9 @@ export function checkPockets(balls) {
 
       // 使用每个袋口自己的半径
       if (distance < (pocket.radius || POCKET_RADIUS)) {
-        // 母球进袋：复位到厨房区
+        // 母球进袋：复位到厨房区（且避免与其他球重叠）
         if (ball.id === 0) {
-          const resetPosition = getCueBallResetPosition();
+          const resetPosition = getCueBallSafeResetPosition(balls);
 
           ball.x = resetPosition.x;
           ball.y = resetPosition.y;
