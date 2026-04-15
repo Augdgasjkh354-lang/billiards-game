@@ -20,7 +20,7 @@ import { initCue } from "./cue.js";
 import { initRules, processTurn, getGameState } from "./rules.js";
 
 /**
- * 第六阶段：
+ * 当前功能概览：
  * - 开始界面模式选择
  * - 犯规后自由球手摆
  * - 游戏结束遮罩 + 重开

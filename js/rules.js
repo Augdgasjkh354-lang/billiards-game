@@ -172,10 +172,11 @@ function switchPlayer() {
 }
 
 /**
- * 国际黑八 push out 规则预留接口
+ * 规则扩展预留接口
+ * 说明：当前实现为中式黑八简化规则，暂不启用额外开局规则。
  */
-function handlePushOut() {
-  // TODO: 国际黑八 push out 规则留空
+function handleFutureRuleExtensions() {
+  // TODO: 预留给后续规则扩展。
 }
 
 /**
@@ -219,7 +220,7 @@ export function processTurn(
     };
   }
 
-  handlePushOut();
+  handleFutureRuleExtensions();
 
   let foul = false;
   let continuesTurn = false;
