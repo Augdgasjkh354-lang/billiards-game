@@ -4,7 +4,12 @@ import {
   TABLE_PADDING,
   POCKETS
 } from "./constants.js";
-import { initBalls, drawBalls } from "./balls.js";
+import {
+  initBalls,
+  drawBalls,
+  updatePocketingAnimations,
+  triggerPocketAnimation
+} from "./balls.js";
 import {
   updateBalls,
   handleWallCollisions,
@@ -161,6 +166,29 @@ function isPointInRect(point, rect) {
     point.y >= rect.y &&
     point.y <= rect.y + rect.height
   );
+}
+
+/**
+ * 获取与球最近的袋口
+ * @param {object} ball
+ * @returns {{ x:number, y:number, radius:number }}
+ */
+function findNearestPocket(ball) {
+  let nearestPocket = POCKETS[0];
+  let nearestDistance = Infinity;
+
+  POCKETS.forEach((pocket) => {
+    const dx = ball.x - pocket.x;
+    const dy = ball.y - pocket.y;
+    const distance = Math.hypot(dx, dy);
+
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestPocket = pocket;
+    }
+  });
+
+  return nearestPocket;
 }
 
 /**
@@ -419,44 +447,39 @@ function drawCloth() {
 
 /**
  * 绘制袋口
- * - 角袋：标准半径
- * - 中袋：略小
- * - 使用黑色到深棕色的径向渐变模拟深度
  */
 function drawPockets() {
   POCKETS.forEach((pocket) => {
     const radius = pocket.radius;
-    const isSidePocket = radius < POCKETS[0].radius;
 
-    // 黑色底圆
     ctx.save();
+
     ctx.beginPath();
     ctx.arc(pocket.x, pocket.y, radius, 0, Math.PI * 2);
     ctx.fillStyle = "#000000";
     ctx.fill();
 
-    // 径向渐变，模拟袋口深度
     const gradient = ctx.createRadialGradient(
       pocket.x,
       pocket.y,
-      radius * 0.12,
+      0,
       pocket.x,
       pocket.y,
       radius
     );
-    gradient.addColorStop(0, "#050505");
-    gradient.addColorStop(1, "#3a1f0d");
+    gradient.addColorStop(0, "#000000");
+    gradient.addColorStop(0.6, "#0a0a0a");
+    gradient.addColorStop(1, "#2a1200");
 
     ctx.beginPath();
     ctx.arc(pocket.x, pocket.y, radius, 0, Math.PI * 2);
     ctx.fillStyle = gradient;
     ctx.fill();
 
-    // 外圈描边
     ctx.beginPath();
     ctx.arc(pocket.x, pocket.y, radius, 0, Math.PI * 2);
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = "#3a1f0d";
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "#5a3010";
     ctx.stroke();
 
     ctx.restore();
@@ -602,9 +625,19 @@ function gameLoop() {
 
         if (id === 0) {
           turnCueBallPocketed = true;
+          return;
+        }
+
+        const ball = balls.find((item) => item.id === id);
+
+        if (ball && ball.isPocketed) {
+          const pocket = findNearestPocket(ball);
+          triggerPocketAnimation(ball, pocket.x, pocket.y);
         }
       });
     }
+
+    updatePocketingAnimations();
 
     const isMovingAfterUpdate = !areAllBallsStopped();
 
@@ -613,6 +646,8 @@ function gameLoop() {
     }
 
     wasMovingLastFrame = isMovingAfterUpdate;
+  } else {
+    updatePocketingAnimations();
   }
 
   render();
