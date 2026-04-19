@@ -4,7 +4,8 @@ import {
   TABLE_PADDING,
   BALL_RADIUS,
   POCKETS,
-  POCKET_RADIUS
+  POCKET_RADIUS,
+  SHOT_SPIN_SCALE
 } from "./constants.js";
 
 /**
@@ -132,51 +133,6 @@ function isPointOnBall(point, ball) {
   return Math.hypot(point.x - ball.x, point.y - ball.y) <= ball.radius + 6;
 }
 
-/**
- * 获取加塞控件中心
- * @returns {{ x:number, y:number }}
- */
-function getSpinControlCenter() {
-  return {
-    x: TABLE_WIDTH - SPIN_CONTROL_MARGIN - SPIN_OUTER_RADIUS,
-    y: SPIN_CONTROL_MARGIN + SPIN_OUTER_RADIUS
-  };
-}
-
-/**
- * 判断点是否在加塞控件内
- * @param {{ x:number, y:number }} point
- * @returns {boolean}
- */
-function isPointInSpinControl(point) {
-  const center = getSpinControlCenter();
-  return Math.hypot(point.x - center.x, point.y - center.y) <= SPIN_OUTER_RADIUS;
-}
-
-/**
- * 根据触点更新加塞红点位置
- * 归一化到 [-1, 1]
- *
- * @param {{ x:number, y:number }} point
- */
-function updateSpinFromPoint(point) {
-  const center = getSpinControlCenter();
-  const maxDistance = SPIN_OUTER_RADIUS - SPIN_DOT_RADIUS;
-
-  let dx = point.x - center.x;
-  let dy = point.y - center.y;
-
-  const distance = Math.hypot(dx, dy);
-
-  if (distance > maxDistance && distance > 0) {
-    const scale = maxDistance / distance;
-    dx *= scale;
-    dy *= scale;
-  }
-
-  spin.x = clamp(dx / maxDistance, -1, 1);
-  spin.y = clamp(dy / maxDistance, -1, 1);
-}
 
 /**
  * 自由球厨房区范围
@@ -558,13 +514,16 @@ export function initCue(canvas, ctx, balls) {
   let touchStartClientY = 0;
   let touchStartAngle = 0;
   let draggingBallInHand = false;
-  let draggingSpinControl = false;
 
   // 自由球手摆
   let ballInHandActive = false;
 
   // 总开关
   let interactionEnabled = true;
+
+  // DOM 旋转控件
+  const spinCanvasEl = document.getElementById("spinCanvas");
+  const spinCtx = spinCanvasEl ? spinCanvasEl.getContext("2d") : null;
 
   const powerFillEl = document.querySelector(".power-fill");
 
@@ -776,11 +735,6 @@ export function initCue(canvas, ctx, balls) {
       return;
     }
 
-    // 如果点在加塞控件内，桌面端保持原逻辑，不在此处理拖动
-    if (isPointInSpinControl(point)) {
-      return;
-    }
-
     const dx = point.x - cueBall.x;
     const dy = point.y - cueBall.y;
 
@@ -799,12 +753,12 @@ export function initCue(canvas, ctx, balls) {
    * @param {number} power
    */
   function attachSpinToCueBall(cueBall, power) {
-    cueBall.spin = {
-      x: spin.x,
-      y: spin.y
-    };
-
-    cueBall.spinFactor = power * 0.3;
+    // spin.y < 0 = 上旋，> 0 = 下旋；omega 正值 = 上旋（球接触地面向后）
+    cueBall.omega = -spin.y * power * SHOT_SPIN_SCALE / BALL_RADIUS;
+    cueBall.spinX = spin.x;
+    // 清除旧字段
+    cueBall.spin = null;
+    cueBall.spinFactor = 0;
   }
 
   /**
@@ -916,11 +870,6 @@ export function initCue(canvas, ctx, balls) {
       return;
     }
 
-    const point = getCanvasPoint(event, canvas);
-    if (point && isPointInSpinControl(point)) {
-      return;
-    }
-
     updateMouseAimAngle(event);
 
     isMouseCharging = true;
@@ -984,7 +933,6 @@ export function initCue(canvas, ctx, balls) {
     aimAngle = 0;
     ballInHandActive = false;
     draggingBallInHand = false;
-    draggingSpinControl = false;
     mobileLockedPower = DEFAULT_MOBILE_POWER;
     spin.x = 0;
     spin.y = 0;
@@ -1122,13 +1070,6 @@ export function initCue(canvas, ctx, balls) {
         clearMobileTouchSession();
         return;
       }
-
-      if (isPointInSpinControl(point)) {
-        activeTouchZone = "spin";
-        draggingSpinControl = true;
-        updateSpinFromPoint(point);
-        return;
-      }
     }
   }
 
@@ -1149,17 +1090,6 @@ export function initCue(canvas, ctx, balls) {
         touches: [touch],
         changedTouches: [touch]
       });
-      return;
-    }
-
-    if (activeTouchZone === "spin") {
-      const rect = canvas.getBoundingClientRect();
-      const point = {
-        x: (touch.clientX - rect.left) * (canvas.width / rect.width),
-        y: (touch.clientY - rect.top) * (canvas.height / rect.height)
-      };
-
-      updateSpinFromPoint(point);
       return;
     }
 
@@ -1194,11 +1124,6 @@ export function initCue(canvas, ctx, balls) {
 
     if (activeTouchZone === "ballInHand") {
       handleBallInHandPointerUp();
-      clearMobileTouchSession();
-      return;
-    }
-
-    if (activeTouchZone === "spin") {
       clearMobileTouchSession();
       return;
     }
@@ -1250,51 +1175,108 @@ export function initCue(canvas, ctx, balls) {
   window.addEventListener("scroll", syncTouchUILayout, { passive: true });
 
   /**
-   * 绘制右上角加塞控件
+   * 绘制 DOM 旋转控件（渲染到独立 spinCanvas 元素）
    */
-  function drawSpinControl() {
-    const center = getSpinControlCenter();
-    const maxDistance = SPIN_OUTER_RADIUS - SPIN_DOT_RADIUS;
-    const dotX = center.x + spin.x * maxDistance;
-    const dotY = center.y + spin.y * maxDistance;
+  function drawSpinControlDOM() {
+    if (!spinCtx || !spinCanvasEl) return;
 
-    ctx.save();
+    const w = spinCanvasEl.width;
+    const h = spinCanvasEl.height;
+    const cx = w / 2;
+    const cy = h / 2;
+    const outerR = 34;
+    const dotR = SPIN_DOT_RADIUS;
+    const maxDist = outerR - dotR;
+    const dotX = cx + spin.x * maxDist;
+    const dotY = cy + spin.y * maxDist;
 
-    // 外圈
-    ctx.beginPath();
-    ctx.arc(center.x, center.y, SPIN_OUTER_RADIUS, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(55, 55, 55, 0.92)";
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
-    ctx.stroke();
+    spinCtx.clearRect(0, 0, w, h);
 
-    // 内部母球
-    ctx.beginPath();
-    ctx.arc(center.x, center.y, SPIN_INNER_RADIUS, 0, Math.PI * 2);
-    ctx.fillStyle = "#ffffff";
-    ctx.fill();
+    // 白色母球圆底
+    spinCtx.beginPath();
+    spinCtx.arc(cx, cy, outerR, 0, Math.PI * 2);
+    spinCtx.fillStyle = "#ffffff";
+    spinCtx.fill();
+    spinCtx.strokeStyle = "rgba(0, 0, 0, 0.2)";
+    spinCtx.lineWidth = 1;
+    spinCtx.stroke();
 
-    // 轻微十字参考线
-    ctx.beginPath();
-    ctx.moveTo(center.x - 10, center.y);
-    ctx.lineTo(center.x + 10, center.y);
-    ctx.moveTo(center.x, center.y - 10);
-    ctx.lineTo(center.x, center.y + 10);
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.18)";
-    ctx.stroke();
+    // 十字参考线
+    spinCtx.beginPath();
+    spinCtx.moveTo(cx - outerR + 4, cy);
+    spinCtx.lineTo(cx + outerR - 4, cy);
+    spinCtx.moveTo(cx, cy - outerR + 4);
+    spinCtx.lineTo(cx, cy + outerR - 4);
+    spinCtx.strokeStyle = "rgba(0, 0, 0, 0.15)";
+    spinCtx.lineWidth = 1;
+    spinCtx.stroke();
 
-    // 红色击球点
-    ctx.beginPath();
-    ctx.arc(dotX, dotY, SPIN_DOT_RADIUS, 0, Math.PI * 2);
-    ctx.fillStyle = "#e53935";
-    ctx.fill();
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = "rgba(120, 0, 0, 0.8)";
-    ctx.stroke();
+    // 高光
+    const highlight = spinCtx.createRadialGradient(
+      cx - outerR * 0.3, cy - outerR * 0.35, 0,
+      cx - outerR * 0.3, cy - outerR * 0.35, outerR * 0.6
+    );
+    highlight.addColorStop(0, "rgba(255,255,255,0.7)");
+    highlight.addColorStop(1, "rgba(255,255,255,0)");
+    spinCtx.save();
+    spinCtx.beginPath();
+    spinCtx.arc(cx, cy, outerR, 0, Math.PI * 2);
+    spinCtx.clip();
+    spinCtx.fillStyle = highlight;
+    spinCtx.fillRect(0, 0, w, h);
+    spinCtx.restore();
 
-    ctx.restore();
+    // 红点
+    spinCtx.beginPath();
+    spinCtx.arc(dotX, dotY, dotR, 0, Math.PI * 2);
+    spinCtx.fillStyle = "#e53935";
+    spinCtx.fill();
+    spinCtx.strokeStyle = "rgba(120, 0, 0, 0.8)";
+    spinCtx.lineWidth = 1;
+    spinCtx.stroke();
+  }
+
+  /**
+   * DOM 旋转控件输入处理
+   */
+  function handleSpinPointer(event) {
+    if (!spinCanvasEl) return;
+    event.preventDefault();
+    const rect = spinCanvasEl.getBoundingClientRect();
+    const scaleX = spinCanvasEl.width / rect.width;
+    const scaleY = spinCanvasEl.height / rect.height;
+    let clientX, clientY;
+    if (event.touches && event.touches.length > 0) {
+      clientX = event.touches[0].clientX;
+      clientY = event.touches[0].clientY;
+    } else {
+      clientX = event.clientX;
+      clientY = event.clientY;
+    }
+    const px = (clientX - rect.left) * scaleX;
+    const py = (clientY - rect.top) * scaleY;
+    const cx = spinCanvasEl.width / 2;
+    const cy = spinCanvasEl.height / 2;
+    const outerR = 34;
+    const maxDist = outerR - SPIN_DOT_RADIUS;
+    let dx = px - cx;
+    let dy = py - cy;
+    const dist = Math.hypot(dx, dy);
+    if (dist > maxDist) {
+      dx *= maxDist / dist;
+      dy *= maxDist / dist;
+    }
+    spin.x = clamp(dx / maxDist, -1, 1);
+    spin.y = clamp(dy / maxDist, -1, 1);
+  }
+
+  if (spinCanvasEl) {
+    spinCanvasEl.addEventListener("pointerdown", handleSpinPointer, { passive: false });
+    spinCanvasEl.addEventListener("pointermove", (e) => {
+      if (e.buttons > 0) handleSpinPointer(e);
+    }, { passive: false });
+    spinCanvasEl.addEventListener("touchstart", handleSpinPointer, { passive: false });
+    spinCanvasEl.addEventListener("touchmove", handleSpinPointer, { passive: false });
   }
 
   /**
@@ -1305,6 +1287,7 @@ export function initCue(canvas, ctx, balls) {
 
     syncTouchUILayout();
     updateMobilePowerBarUI();
+    drawSpinControlDOM();
 
     if (!cueBall || cueBall.isPocketed || !interactionEnabled) {
       syncBottomPowerBar();
@@ -1331,7 +1314,7 @@ export function initCue(canvas, ctx, balls) {
       ctx.stroke();
       ctx.restore();
 
-      drawSpinControl();
+      drawSpinControlDOM();
       return;
     }
 

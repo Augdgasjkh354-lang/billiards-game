@@ -49,6 +49,8 @@ function createBall(id, x, y) {
     y,
     vx: 0,
     vy: 0,
+    omega: 0,
+    spinX: 0,
     radius: BALL_RADIUS,
     color: BALL_COLORS[id],
     isStripe: id >= 9 && id <= 15,

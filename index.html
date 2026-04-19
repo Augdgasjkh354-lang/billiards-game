@@ -10,7 +10,7 @@
 <body>
   <div class="app">
     <header class="top-ui">
-      <div class="ui-panel">
+      <div class="ui-panel top-panel">
         <span>回合信息区域</span>
       </div>
     </header>
@@ -20,10 +20,17 @@
     </main>
 
     <footer class="bottom-ui">
-      <div class="ui-panel power-panel">
-        <span>力度条区域</span>
-        <div class="power-bar">
-          <div class="power-fill"></div>
+      <div class="ui-panel bottom-panel">
+        <div class="spin-control-wrapper">
+          <span class="control-label">旋转</span>
+          <canvas id="spinCanvas" width="80" height="80"></canvas>
+        </div>
+        <div class="panel-divider"></div>
+        <div class="power-section">
+          <span class="control-label">力度</span>
+          <div class="power-bar">
+            <div class="power-fill"></div>
+          </div>
         </div>
       </div>
     </footer>

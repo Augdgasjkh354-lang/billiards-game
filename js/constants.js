@@ -49,5 +49,22 @@ export const BALL_COLORS = [
 ];
 
 // 物理常量
-export const FRICTION = 0.985;
 export const MIN_VELOCITY = 0.1;
+export const MIN_ANGULAR = 0.005;
+
+// 两阶段摩擦模型
+export const ROLLING_FRICTION = 0.9875;       // 滚动摩擦（每帧速度系数）
+export const SLIDING_DECELERATION = 0.18;     // 滑动减速度 px/frame²
+export const ROLLING_THRESHOLD = 0.08;        // 滑差低于此值视为滚动
+
+// 碰撞弹性系数
+export const COR_BALL = 0.92;                 // 球-球碰撞
+export const COR_CUSHION = 0.85;              // 球-库边碰撞
+export const CUSHION_TANGENTIAL_FRICTION = 0.92; // 库边切向摩擦
+
+// 旋转物理
+export const INERTIA_FACTOR = 0.4;            // 实心球转动惯量系数 2/5
+export const SPIN_SIDE_EFFECT = 0.06;         // 侧旋漂移系数
+export const SPIN_ROLLING_DECAY = 0.988;      // 滚动时旋转衰减
+export const SPIN_SLIDING_DECAY = 0.972;      // 滑动时旋转衰减
+export const SHOT_SPIN_SCALE = 0.6;           // 击球旋转初始化系数
