@@ -5,8 +5,18 @@ import {
   BALL_RADIUS,
   POCKET_RADIUS,
   POCKETS,
-  FRICTION,
-  MIN_VELOCITY
+  MIN_VELOCITY,
+  MIN_ANGULAR,
+  ROLLING_FRICTION,
+  SLIDING_DECELERATION,
+  ROLLING_THRESHOLD,
+  COR_BALL,
+  COR_CUSHION,
+  CUSHION_TANGENTIAL_FRICTION,
+  INERTIA_FACTOR,
+  SPIN_SIDE_EFFECT,
+  SPIN_ROLLING_DECAY,
+  SPIN_SLIDING_DECAY
 } from "./constants.js";
 
 function getCueBallResetPosition() {
@@ -76,46 +86,70 @@ export function updateBalls(balls) {
   balls.forEach((ball) => {
     if (ball.isPocketed) return;
 
-    ball.x += ball.vx;
-    ball.y += ball.vy;
+    const speed = Math.hypot(ball.vx, ball.vy);
 
-    ball.vx *= FRICTION;
-    ball.vy *= FRICTION;
+    if (speed > MIN_VELOCITY) {
+      const dirX = ball.vx / speed;
+      const dirY = ball.vy / speed;
 
-    if (Math.abs(ball.vx) < MIN_VELOCITY) ball.vx = 0;
-    if (Math.abs(ball.vy) < MIN_VELOCITY) ball.vy = 0;
+      // 计算滑差：线速度 vs 滚动接触速度
+      const slip = speed - ball.omega * BALL_RADIUS;
 
-    // 母球持续侧旋漂移效果
-    if (ball.id === 0 && ball.spin) {
-      const speed = Math.hypot(ball.vx, ball.vy);
+      if (Math.abs(slip) > ROLLING_THRESHOLD) {
+        // 滑动阶段：切向减速，角速度向滚动收敛
+        const decel = Math.min(SLIDING_DECELERATION, speed);
+        const newSpeed = speed - decel;
 
-      if (speed > MIN_VELOCITY) {
-        const dirX = ball.vx / speed;
-        const dirY = ball.vy / speed;
+        ball.vx = dirX * newSpeed;
+        ball.vy = dirY * newSpeed;
 
-        // 垂直于当前运动方向
+        // 角加速度：α = 5F/(2mr)，单位质量且 r = BALL_RADIUS
+        const angularAccel = (5 / 2) * decel / BALL_RADIUS;
+        if (slip > 0) {
+          // 线速度大于滚动速度 → 增大 omega（前旋收敛）
+          ball.omega = Math.min(ball.omega + angularAccel, newSpeed / BALL_RADIUS);
+        } else {
+          // 线速度小于滚动速度（超旋）→ 减小 omega
+          ball.omega = Math.max(ball.omega - angularAccel, newSpeed / BALL_RADIUS);
+        }
+
+        ball.spinX *= SPIN_SLIDING_DECAY;
+      } else {
+        // 滚动阶段：对齐角速度，统一施加滚动摩擦
+        ball.omega = speed / BALL_RADIUS;
+        ball.vx *= ROLLING_FRICTION;
+        ball.vy *= ROLLING_FRICTION;
+        ball.omega *= ROLLING_FRICTION;
+
+        ball.spinX *= SPIN_ROLLING_DECAY;
+      }
+
+      // 侧旋横向漂移（速度正比，快球弧度更大）
+      if (Math.abs(ball.spinX) > MIN_ANGULAR) {
+        const currentSpeed = Math.hypot(ball.vx, ball.vy);
         const perpX = -dirY;
         const perpY = dirX;
-
-        // 左右加塞产生轻微横向漂移
-        ball.vx += perpX * ball.spin.x * 0.04;
-        ball.vy += perpY * ball.spin.x * 0.04;
-
-        // 旋转逐渐衰减
-        ball.spin.x *= 0.97;
-        ball.spin.y *= 0.97;
-
-        // 清理极小旋转，避免长时间微漂移
-        if (Math.abs(ball.spin.x) < 0.01) ball.spin.x = 0;
-        if (Math.abs(ball.spin.y) < 0.01) ball.spin.y = 0;
-
-        if (ball.spin.x === 0 && ball.spin.y === 0) {
-          ball.spin = null;
-        }
-      } else {
-        ball.spin = null;
+        const driftStrength = ball.spinX * SPIN_SIDE_EFFECT * (currentSpeed / 10.0);
+        ball.vx += perpX * driftStrength;
+        ball.vy += perpY * driftStrength;
       }
+
+      // 清零极小旋转
+      if (Math.abs(ball.spinX) < MIN_ANGULAR) ball.spinX = 0;
+      if (Math.abs(ball.omega) < MIN_ANGULAR) ball.omega = 0;
+
+      // 速度阈值清零
+      if (Math.abs(ball.vx) < MIN_VELOCITY) ball.vx = 0;
+      if (Math.abs(ball.vy) < MIN_VELOCITY) ball.vy = 0;
+    } else {
+      ball.vx = 0;
+      ball.vy = 0;
+      ball.omega = 0;
+      ball.spinX = 0;
     }
+
+    ball.x += ball.vx;
+    ball.y += ball.vy;
   });
 }
 
@@ -129,18 +163,29 @@ export function handleWallCollisions(ball) {
 
   if (ball.x < minX) {
     ball.x = minX;
-    ball.vx = -ball.vx;
+    ball.vx = Math.abs(ball.vx) * COR_CUSHION;
+    ball.vy *= CUSHION_TANGENTIAL_FRICTION;
+    // 侧旋在侧面库边反向（英式旋转真实物理）
+    ball.spinX = -ball.spinX * COR_CUSHION;
+    ball.omega *= COR_CUSHION;
   } else if (ball.x > maxX) {
     ball.x = maxX;
-    ball.vx = -ball.vx;
+    ball.vx = -Math.abs(ball.vx) * COR_CUSHION;
+    ball.vy *= CUSHION_TANGENTIAL_FRICTION;
+    ball.spinX = -ball.spinX * COR_CUSHION;
+    ball.omega *= COR_CUSHION;
   }
 
   if (ball.y < minY) {
     ball.y = minY;
-    ball.vy = -ball.vy;
+    ball.vy = Math.abs(ball.vy) * COR_CUSHION;
+    ball.vx *= CUSHION_TANGENTIAL_FRICTION;
+    ball.omega *= COR_CUSHION;
   } else if (ball.y > maxY) {
     ball.y = maxY;
-    ball.vy = -ball.vy;
+    ball.vy = -Math.abs(ball.vy) * COR_CUSHION;
+    ball.vx *= CUSHION_TANGENTIAL_FRICTION;
+    ball.omega *= COR_CUSHION;
   }
 }
 
@@ -177,17 +222,19 @@ export function handleBallCollisions(balls) {
       const tx = -ny;
       const ty = nx;
 
-      // 法线方向速度
+      // 法线方向速度分量
       const vA_n = ballA.vx * nx + ballA.vy * ny;
       const vB_n = ballB.vx * nx + ballB.vy * ny;
 
-      // 切线方向速度
+      // 切线方向速度分量（不变）
       const vA_t = ballA.vx * tx + ballA.vy * ty;
       const vB_t = ballB.vx * tx + ballB.vy * ty;
 
-      // 等质量弹性碰撞：交换法线方向速度
-      const newVA_n = vB_n;
-      const newVB_n = vA_n;
+      // 等质量球，带 COR 的碰撞冲量
+      // impulse = (1 + COR) / 2 * (vA_n - vB_n)
+      const impulse = (1 + COR_BALL) / 2 * (vA_n - vB_n);
+      const newVA_n = vA_n - impulse;
+      const newVB_n = vB_n + impulse;
 
       ballA.vx = newVA_n * nx + vA_t * tx;
       ballA.vy = newVA_n * ny + vA_t * ty;
@@ -195,31 +242,17 @@ export function handleBallCollisions(balls) {
       ballB.vx = newVB_n * nx + vB_t * tx;
       ballB.vy = newVB_n * ny + vB_t * ty;
 
-      // 母球碰撞后的加塞效果
-      const cueBall =
-        ballA.id === 0 ? ballA : ballB.id === 0 ? ballB : null;
+      // 旋转传递：按转动惯量系数将 omega 部分传递给被撞球
+      // transferFraction = I/(m*r² + I) ≈ INERTIA_FACTOR/(1+INERTIA_FACTOR)
+      const transferFrac = INERTIA_FACTOR / (1 + INERTIA_FACTOR);
+      const omegaTransfer = (ballA.omega - ballB.omega) * transferFrac * 0.15;
+      ballA.omega -= omegaTransfer;
+      ballB.omega += omegaTransfer;
 
-      if (cueBall && cueBall.spin) {
-        const spinFactor = cueBall.spinFactor || 3;
-
-        // 母球 -> 目标球的碰撞法线
-        const cnx = cueBall === ballA ? nx : -nx;
-        const cny = cueBall === ballA ? ny : -ny;
-
-        // 高杆 / 低杆
-        // spin.y < 0 => 高杆，继续前冲
-        // spin.y > 0 => 低杆，向后回拉
-        cueBall.vx += cnx * (-cueBall.spin.y) * spinFactor;
-        cueBall.vy += cny * (-cueBall.spin.y) * spinFactor;
-
-        // 左右加塞
-        cueBall.vx += -cny * cueBall.spin.x * spinFactor * 0.4;
-        cueBall.vy += cnx * cueBall.spin.x * spinFactor * 0.4;
-
-        // 碰撞后只生效一次
-        cueBall.spin = null;
-        cueBall.spinFactor = 0;
-      }
+      // 侧旋部分传递
+      const spinXTransfer = (ballA.spinX - ballB.spinX) * transferFrac * 0.1;
+      ballA.spinX -= spinXTransfer;
+      ballB.spinX += spinXTransfer;
 
       // 分离重叠
       const overlap = minDistance - safeDistance;
@@ -245,9 +278,7 @@ export function checkPockets(balls) {
       const dy = ball.y - pocket.y;
       const distance = Math.hypot(dx, dy);
 
-      // 使用每个袋口自己的半径
       if (distance < (pocket.radius || POCKET_RADIUS)) {
-        // 母球进袋：复位到厨房区（且避免与其他球重叠）
         if (ball.id === 0) {
           const resetPosition = getCueBallSafeResetPosition(balls);
 
@@ -255,6 +286,8 @@ export function checkPockets(balls) {
           ball.y = resetPosition.y;
           ball.vx = 0;
           ball.vy = 0;
+          ball.omega = 0;
+          ball.spinX = 0;
           ball.spin = null;
           ball.spinFactor = 0;
 
@@ -265,6 +298,8 @@ export function checkPockets(balls) {
         ball.isPocketed = true;
         ball.vx = 0;
         ball.vy = 0;
+        ball.omega = 0;
+        ball.spinX = 0;
 
         pocketedBallIds.push(ball.id);
         break;

@@ -425,61 +425,171 @@ function updateTopUI() {
 }
 
 /**
- * 绘制球桌外框（库边）
+ * 绘制球桌外框（库边）— 木纹渐变
  */
 function drawRails() {
-  ctx.fillStyle = "#4a2f1b";
+  ctx.save();
+
+  // 底层木色渐变
+  const railGrad = ctx.createLinearGradient(0, 0, 0, TABLE_HEIGHT);
+  railGrad.addColorStop(0, "#5c3a1e");
+  railGrad.addColorStop(0.3, "#4a2f1b");
+  railGrad.addColorStop(0.7, "#3d2412");
+  railGrad.addColorStop(1, "#4a2f1b");
+  ctx.fillStyle = railGrad;
   ctx.fillRect(0, 0, TABLE_WIDTH, TABLE_HEIGHT);
+
+  // 水平木纹条纹
+  for (let y = 0; y < TABLE_HEIGHT; y += 6) {
+    const alpha = 0.025 + Math.abs(Math.sin(y * 0.65)) * 0.018;
+    ctx.fillStyle = `rgba(0,0,0,${alpha.toFixed(3)})`;
+    ctx.fillRect(0, y, TABLE_WIDTH, 2);
+  }
+
+  // 内侧四边高光（模拟库边与台面交接处）
+  const edgeHighlight = ctx.createLinearGradient(TABLE_PADDING - 6, 0, TABLE_PADDING, 0);
+  edgeHighlight.addColorStop(0, "rgba(255,255,255,0)");
+  edgeHighlight.addColorStop(1, "rgba(255,255,255,0.1)");
+  ctx.fillStyle = edgeHighlight;
+  ctx.fillRect(TABLE_PADDING - 6, TABLE_PADDING, 6, TABLE_HEIGHT - TABLE_PADDING * 2);
+
+  const edgeHighlightR = ctx.createLinearGradient(TABLE_WIDTH - TABLE_PADDING, 0, TABLE_WIDTH - TABLE_PADDING + 6, 0);
+  edgeHighlightR.addColorStop(0, "rgba(255,255,255,0.1)");
+  edgeHighlightR.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = edgeHighlightR;
+  ctx.fillRect(TABLE_WIDTH - TABLE_PADDING, TABLE_PADDING, 6, TABLE_HEIGHT - TABLE_PADDING * 2);
+
+  // 外框深色边线
+  ctx.strokeStyle = "rgba(0,0,0,0.55)";
+  ctx.lineWidth = 4;
+  ctx.strokeRect(2, 2, TABLE_WIDTH - 4, TABLE_HEIGHT - 4);
+
+  ctx.restore();
 }
 
 /**
- * 绘制台面
+ * 绘制台面 — 径向渐变 + 斜向织物纹路
  */
 function drawCloth() {
-  ctx.fillStyle = "#1f8b4c";
-  ctx.fillRect(
-    TABLE_PADDING,
-    TABLE_PADDING,
-    TABLE_WIDTH - TABLE_PADDING * 2,
-    TABLE_HEIGHT - TABLE_PADDING * 2
+  const cX = TABLE_PADDING;
+  const cY = TABLE_PADDING;
+  const cW = TABLE_WIDTH - TABLE_PADDING * 2;
+  const cH = TABLE_HEIGHT - TABLE_PADDING * 2;
+
+  // 径向渐变：中心略亮，边缘暗（灯光效果）
+  const feltGrad = ctx.createRadialGradient(
+    TABLE_WIDTH / 2, TABLE_HEIGHT / 2, 0,
+    TABLE_WIDTH / 2, TABLE_HEIGHT / 2, Math.max(cW, cH) * 0.72
   );
+  feltGrad.addColorStop(0, "#22964f");
+  feltGrad.addColorStop(0.5, "#1f8b4c");
+  feltGrad.addColorStop(1, "#165f35");
+  ctx.fillStyle = feltGrad;
+  ctx.fillRect(cX, cY, cW, cH);
+
+  // 斜向织物纹路
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(cX, cY, cW, cH);
+  ctx.clip();
+  ctx.strokeStyle = "rgba(0,0,0,0.04)";
+  ctx.lineWidth = 1;
+  for (let x = cX - cH; x < cX + cW + cH; x += 9) {
+    ctx.beginPath();
+    ctx.moveTo(x, cY);
+    ctx.lineTo(x + cH, cY + cH);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 /**
- * 绘制袋口
+ * 绘制单个菱形瞄准标记
+ */
+function drawDiamond(x, y, size, color) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(x, y - size);
+  ctx.lineTo(x + size * 0.62, y);
+  ctx.lineTo(x, y + size);
+  ctx.lineTo(x - size * 0.62, y);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = "rgba(160, 120, 50, 0.5)";
+  ctx.lineWidth = 0.6;
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * 绘制库边瞄准点（菱形标记）
+ */
+function drawDiamondMarkers() {
+  const innerW = TABLE_WIDTH - TABLE_PADDING * 2;
+  const innerH = TABLE_HEIGHT - TABLE_PADDING * 2;
+  const color = "rgba(235, 210, 120, 0.82)";
+  const size = 4.5;
+
+  // 长边：8 等分，跳过距袋口过近的位置
+  for (let i = 1; i <= 7; i++) {
+    const x = TABLE_PADDING + (innerW / 8) * i;
+    if (Math.abs(x - TABLE_WIDTH / 2) < 12) continue;
+
+    const yTop = TABLE_PADDING / 2;
+    const yBot = TABLE_HEIGHT - TABLE_PADDING / 2;
+    drawDiamond(x, yTop, size, color);
+    drawDiamond(x, yBot, size, color);
+  }
+
+  // 短边：4 等分
+  for (let i = 1; i <= 3; i++) {
+    const y = TABLE_PADDING + (innerH / 4) * i;
+    const xLeft = TABLE_PADDING / 2;
+    const xRight = TABLE_WIDTH - TABLE_PADDING / 2;
+    drawDiamond(xLeft, y, size, color);
+    drawDiamond(xRight, y, size, color);
+  }
+}
+
+/**
+ * 绘制袋口 — 3层：皮革环 + 深洞渐变 + 边缘高光
  */
 function drawPockets() {
   POCKETS.forEach((pocket) => {
-    const radius = pocket.radius;
+    const r = pocket.radius;
+    const { x, y } = pocket;
 
     ctx.save();
 
+    // 皮革外环
     ctx.beginPath();
-    ctx.arc(pocket.x, pocket.y, radius, 0, Math.PI * 2);
-    ctx.fillStyle = "#000000";
+    ctx.arc(x, y, r + 4, 0, Math.PI * 2);
+    ctx.fillStyle = "#2e1608";
     ctx.fill();
 
-    const gradient = ctx.createRadialGradient(
-      pocket.x,
-      pocket.y,
-      0,
-      pocket.x,
-      pocket.y,
-      radius
+    // 深黑洞
+    const holeGrad = ctx.createRadialGradient(
+      x - r * 0.25, y - r * 0.25, 0,
+      x, y, r
     );
-    gradient.addColorStop(0, "#000000");
-    gradient.addColorStop(0.6, "#0a0a0a");
-    gradient.addColorStop(1, "#2a1200");
-
+    holeGrad.addColorStop(0, "#1a1a1a");
+    holeGrad.addColorStop(0.55, "#080808");
+    holeGrad.addColorStop(1, "#000000");
     ctx.beginPath();
-    ctx.arc(pocket.x, pocket.y, radius, 0, Math.PI * 2);
-    ctx.fillStyle = gradient;
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = holeGrad;
     ctx.fill();
 
+    // 皮革边缘高光描边
+    const rimGrad = ctx.createLinearGradient(x - r, y - r, x + r * 0.5, y + r * 0.5);
+    rimGrad.addColorStop(0, "rgba(130, 75, 25, 0.75)");
+    rimGrad.addColorStop(0.5, "rgba(80, 40, 10, 0.35)");
+    rimGrad.addColorStop(1, "rgba(0, 0, 0, 0)");
     ctx.beginPath();
-    ctx.arc(pocket.x, pocket.y, radius, 0, Math.PI * 2);
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = "#5a3010";
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = rimGrad;
     ctx.stroke();
 
     ctx.restore();
@@ -487,10 +597,10 @@ function drawPockets() {
 }
 
 /**
- * 绘制台面内部边线
+ * 绘制台面内部边线 — 暖色库边线
  */
 function drawInnerBorder() {
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+  ctx.strokeStyle = "rgba(160, 110, 50, 0.35)";
   ctx.lineWidth = 2;
   ctx.strokeRect(
     TABLE_PADDING,
@@ -552,6 +662,7 @@ function render() {
 
   drawRails();
   drawCloth();
+  drawDiamondMarkers();
   drawInnerBorder();
   drawPockets();
 
